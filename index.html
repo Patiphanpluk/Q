@@ -181,7 +181,7 @@
 
         // --- UI Modal Logic ---
         window.uiAlert = (message, type = 'info') => {
-            window.state.modal = { show: true, title: type === 'error' ? 'ข้อผิดพลาด' : 'แจ้งเตือน', message, type, onConfirm: null };
+            window.state.modal = { show: true, title: type === 'error' ? 'ข้อผิดพลาด' : type === 'success' ? 'สำเร็จ' : 'แจ้งเตือน', message, type, onConfirm: null };
             render();
         };
 
@@ -245,6 +245,8 @@
         };
 
         window.toggleSlotSelection = (slotObj) => {
+            if (window.state.view !== 'calendar') window.state.view = 'calendar';
+            
             const index = window.state.selectedSlots.findIndex(s => s.start === slotObj.start);
             if (index > -1) {
                 window.state.selectedSlots.splice(index, 1);
@@ -280,8 +282,12 @@
                     const docRef = await addDoc(collection(db, 'artifacts', fbId, 'public', 'data', 'bookings'), data);
                     newItems.push({ id: docRef.id, ...data });
                 }
+
                 window.state.activeBookings = newItems;
                 window.state.selectedSlots = [];
+                
+                window.uiAlert(`จองสำเร็จ! รายการจองของคุณถูกบันทึกเข้าระบบเรียบร้อยแล้ว`, "success");
+                
                 window.state.view = 'pass';
                 render();
             } catch (err) { window.uiAlert("Booking failed: " + err.message, "error"); }
@@ -398,7 +404,32 @@
         };
 
         window.deleteResource = (id) => window.uiConfirm("ลบทรัพยากร", "คุณต้องการลบรายการนี้ใช่หรือไม่?", async () => await deleteDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'resources', id)));
-        window.delBooking = (id) => window.uiConfirm("ยกเลิกการจอง", "คุณต้องการยกเลิกช่วงเวลานี้ใช่หรือไม่?", async () => await deleteDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'bookings', id)));
+        
+        window.delBooking = (id) => {
+            const booking = window.state.bookings.find(b => b.id === id);
+            if (!booking) return;
+
+            const today = new Date();
+            today.setHours(0,0,0,0);
+            
+            const bDate = new Date(booking.date);
+            bDate.setHours(0,0,0,0);
+
+            const diffTime = bDate.getTime() - today.getTime();
+            const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+
+            if (diffDays < 1) {
+                // MODIFIED: Added line breaks for better formatting
+                return window.uiAlert("ไม่สามารถยกเลิกได้!\nระบบอนุญาตให้ยกเลิกรายการจองล่วงหน้าอย่างน้อย 1 วันเท่านั้น\n(ไม่สามารถยกเลิกงานของวันนี้ได้)", "error");
+            }
+
+            window.uiConfirm("ยกเลิกการจอง", "คุณต้องการยกเลิกช่วงเวลานี้ใช่หรือไม่?", async () => {
+                await deleteDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'bookings', id));
+                if (window.state.view !== 'calendar') window.state.view = 'calendar';
+                render();
+            });
+        };
+
         window.clearByDay = (d) => window.uiConfirm("ลบข้อมูลรายวัน", `ต้องการลบข้อมูลทั้งหมดของวันที่ ${formatDateTH(d)}?`, async () => {
             for(const b of window.state.bookings.filter(x => x.date === d)) await deleteDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'bookings', b.id));
         });
@@ -599,11 +630,23 @@
                                     let btnClass = "bg-white border-slate-100 text-slate-500 hover:border-indigo-300";
                                     let sText = "ว่าง"; 
                                     let act = `window.toggleSlotSelection(${JSON.stringify(s).replace(/"/g, '&quot;')})`;
-                                    if (bOthers) { btnClass = "bg-slate-50 border-slate-100 text-slate-300 opacity-50 cursor-not-allowed"; sText = `จองแล้วโดย ID:..${bOthers.studentId.slice(-3)}`; act = ""; }
-                                    else if (bMine) { btnClass = "bg-green-50 border-green-500 text-green-700 shadow-sm"; sText = "จองแล้ว (คลิกยกเลิก)"; act = `window.delBooking('${bMine.id}')`; }
-                                    else if (isSelecting) { btnClass = "bg-indigo-600 border-indigo-600 text-white shadow-xl ring-4 ring-indigo-50"; sText = "กำลังเลือก"; }
                                     
-                                    return `<button onclick="${act}" class="relative p-5 rounded-2xl border-2 transition-all flex justify-between items-center ${btnClass} active:scale-[0.98] text-left"><div class="text-left leading-none"><span class="text-base font-bold text-left">${s.start} - ${s.end}</span><p class="text-[8px] font-bold uppercase mt-1.5 opacity-60 tracking-widest text-left">${sText}</p></div><div class="w-8 h-8 rounded-xl flex items-center justify-center ${bMine || isSelecting ? 'bg-white/20' : 'bg-slate-50'} shadow-inner text-center">${bMine || isSelecting ? '<i data-lucide="check" size="16"></i>' : '<i data-lucide="plus" size="16" class="opacity-20"></i>'}</div></button>`;
+                                    if (bOthers) { 
+                                        btnClass = "bg-slate-50 border-slate-100 text-slate-300 opacity-80 cursor-not-allowed"; 
+                                        sText = `จองโดย: ${bOthers.studentId}`; 
+                                        act = ""; 
+                                    }
+                                    else if (bMine) { 
+                                        btnClass = "bg-green-50 border-green-500 text-green-700 shadow-sm"; 
+                                        sText = "จองแล้ว (คลิกยกเลิก)"; 
+                                        act = `window.delBooking('${bMine.id}')`; 
+                                    }
+                                    else if (isSelecting) { 
+                                        btnClass = "bg-indigo-600 border-indigo-600 text-white shadow-xl ring-4 ring-indigo-50"; 
+                                        sText = "กำลังเลือก"; 
+                                    }
+                                    
+                                    return `<button onclick="${act}" class="relative p-5 rounded-2xl border-2 transition-all flex justify-between items-center ${btnClass} active:scale-[0.98] text-left"><div class="text-left leading-none"><span class="text-base font-bold text-left">${s.start} - ${s.end}</span><p class="text-[8px] font-bold uppercase mt-1.5 opacity-80 tracking-widest text-left">${sText}</p></div><div class="w-8 h-8 rounded-xl flex items-center justify-center ${bMine || isSelecting ? 'bg-white/20' : 'bg-slate-50'} shadow-inner text-center">${bMine || isSelecting ? '<i data-lucide="check" size="16"></i>' : bOthers ? '<i data-lucide="lock" size="14"></i>' : '<i data-lucide="plus" size="16" class="opacity-20"></i>'}</div></button>`;
                                 }).join('')}
                             </div>
                         `}
@@ -646,7 +689,7 @@
                                         <i data-lucide="qr-code" size="20"></i> สแกนเช็คอินเพื่อเข้าใช้
                                     </button>
                                 `}
-                                <button onclick="window.state.activeBookings=[]; window.setView('selection');" class="text-[10px] font-bold text-slate-400 uppercase tracking-widest py-2 text-center">ปิดหน้าต่าง</button>
+                                <button onclick="window.state.activeBookings=[]; window.setView('selection'); window.state.selectedResource=null; render();" class="text-[10px] font-bold text-slate-400 uppercase tracking-widest py-2 text-center">กลับหน้าหลัก</button>
                             </div>
                         </div>
                     </div>
@@ -772,11 +815,12 @@
             return `
                 <div class="fixed inset-0 bg-slate-900/80 backdrop-blur-sm z-[300] flex items-center justify-center p-8 page-transition text-center">
                     <div class="bg-white rounded-[2.5rem] p-10 max-w-sm w-full text-center shadow-2xl border border-white text-center">
-                        <div class="w-16 h-16 ${window.state.modal.type === 'error' ? 'bg-red-50 text-red-500' : 'bg-indigo-50 text-indigo-600'} rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-inner text-center">
-                            <i data-lucide="${window.state.modal.type === 'error' ? 'alert-octagon' : isConfirm ? 'help-circle' : 'info'}" size="32"></i>
+                        <div class="w-16 h-16 ${window.state.modal.type === 'error' ? 'bg-red-50 text-red-500' : window.state.modal.type === 'success' ? 'bg-green-50 text-green-500' : 'bg-indigo-50 text-indigo-600'} rounded-3xl flex items-center justify-center mx-auto mb-6 shadow-inner text-center">
+                            <i data-lucide="${window.state.modal.type === 'error' ? 'alert-octagon' : window.state.modal.type === 'success' ? 'check-circle' : isConfirm ? 'help-circle' : 'info'}" size="32"></i>
                         </div>
                         <h3 class="text-xl font-black text-slate-800 mb-2 leading-tight text-center">${window.state.modal.title}</h3>
-                        <p class="text-sm text-slate-500 font-medium leading-relaxed text-center">${window.state.modal.message}</p>
+                        <!-- MODIFIED: Added whitespace-pre-line to handle multiline alerts -->
+                        <p class="text-sm text-slate-500 font-medium leading-relaxed text-center whitespace-pre-line">${window.state.modal.message}</p>
                         <div class="mt-8 flex gap-3 text-center">
                             ${isConfirm ? `
                                 <button onclick="window.closeModal()" class="flex-1 py-4 bg-slate-100 text-slate-500 font-bold rounded-2xl hover:bg-slate-200 text-center">ยกเลิก</button>
