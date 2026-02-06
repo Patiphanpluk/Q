@@ -17,6 +17,7 @@
         "firebase/app": "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js",
         "firebase/auth": "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js",
         "firebase/firestore": "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js",
+        "firebase/storage": "https://www.gstatic.com/firebasejs/10.8.0/firebase-storage.js",
         "lucide-react": "https://esm.sh/lucide-react@0.344.0?external=react"
       }
     }
@@ -29,6 +30,12 @@
         @import url('https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;700&display=swap');
         body { font-family: 'Sarabun', sans-serif; }
         @media print { body { display: none !important; } }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #000; }
+        ::-webkit-scrollbar-thumb { background: #333; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #10b981; }
     </style>
 </head>
 <body class="bg-black text-white min-h-screen">
@@ -41,7 +48,8 @@
         import { initializeApp } from 'firebase/app';
         import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
         import { getFirestore, doc, setDoc, updateDoc, getDoc, onSnapshot, serverTimestamp, collection, query, where, orderBy, deleteField } from 'firebase/firestore';
-        import { AlertTriangle, Clock, Eye, EyeOff, Lock, Shield, Share2, Copy, Settings, Trash2, CheckCircle, XCircle, History } from 'lucide-react';
+        import { getStorage, ref, uploadBytes, getDownloadURL, deleteObject } from 'firebase/storage';
+        import { AlertTriangle, Clock, Eye, EyeOff, Lock, Shield, Share2, Copy, Settings, Trash2, CheckCircle, XCircle, History, Image as ImageIcon, Upload, X } from 'lucide-react';
 
         // --- Firebase Configuration ---
         const firebaseConfig = {
@@ -58,7 +66,8 @@
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
-        const appId = 'github-hosted-v1'; // Static App ID for GitHub Pages
+        const storage = getStorage(app);
+        const appId = 'github-hosted-v1';
 
         // --- Helper Components ---
 
@@ -88,7 +97,6 @@
                     e.preventDefault();
                     setBlurActive(true);
                     setTimeout(() => setBlurActive(false), 2000);
-                    // alert('ระบบความปลอดภัยทำงาน: ห้ามบันทึกภาพ'); // Optional: Uncomment if annoying
                 }
                 };
 
@@ -138,9 +146,13 @@
             
             // Admin State
             const [secretMessage, setSecretMessage] = useState('');
+            const [selectedImage, setSelectedImage] = useState(null);
+            const [imagePreview, setImagePreview] = useState(null);
+            const [isUploading, setIsUploading] = useState(false);
             const [timerSeconds, setTimerSeconds] = useState(60);
             const [generatedLink, setGeneratedLink] = useState(null);
             const [history, setHistory] = useState([]);
+            const fileInputRef = useRef(null);
 
             // Viewer State
             const [linkData, setLinkData] = useState(null);
@@ -161,7 +173,7 @@
                 onAuthStateChanged(auth, setUser);
             }, []);
 
-            // Handle URL Parameters for Direct Links
+            // Handle URL Parameters
             useEffect(() => {
                 const params = new URLSearchParams(window.location.search);
                 const id = params.get('id');
@@ -170,6 +182,25 @@
                     setView('viewer');
                 }
             }, []);
+
+            // Handle Image Selection
+            const handleImageSelect = (e) => {
+                const file = e.target.files[0];
+                if (file) {
+                    setSelectedImage(file);
+                    const reader = new FileReader();
+                    reader.onloadend = () => {
+                        setImagePreview(reader.result);
+                    };
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            const clearImage = () => {
+                setSelectedImage(null);
+                setImagePreview(null);
+                if (fileInputRef.current) fileInputRef.current.value = '';
+            };
 
             // Admin History Listener
             useEffect(() => {
@@ -218,7 +249,7 @@
                     const diff = Math.floor((end - now) / 1000);
 
                     if (diff <= 0) {
-                        handleExpire(docRef);
+                        handleExpire(docRef, data);
                     } else {
                         setTimeLeft(diff);
                         setIsExpired(false);
@@ -249,7 +280,7 @@
                         setTimeLeft(0);
                         setIsExpired(true);
                         const docRef = doc(db, 'artifacts', appId, 'public', 'data', 'links', viewLinkId);
-                        handleExpire(docRef);
+                        handleExpire(docRef, linkData);
                     } else {
                         setTimeLeft(diff);
                     }
@@ -259,13 +290,25 @@
             }, [linkData, isExpired, viewLinkId]);
 
 
-            const handleExpire = async (docRef) => {
+            const handleExpire = async (docRef, data) => {
                 try {
+                    // Delete Content from Firestore
                     await updateDoc(docRef, {
                         status: 'expired',
                         message: deleteField(),
+                        imageUrl: deleteField(),
+                        storagePath: deleteField(),
                         expiredAt: serverTimestamp()
                     });
+                    
+                    // Delete Image from Storage if exists
+                    if (data?.storagePath) {
+                        const imageRef = ref(storage, data.storagePath);
+                        deleteObject(imageRef).catch((error) => {
+                            console.log("Image already deleted or permission denied:", error);
+                        });
+                    }
+
                     setIsExpired(true);
                 } catch (e) {
                     console.error("Expire error", e);
@@ -273,20 +316,43 @@
             };
 
             const createLink = async () => {
-                if (!secretMessage) return;
+                if (!secretMessage && !selectedImage) return;
+                setIsUploading(true);
                 const newId = Math.random().toString(36).substring(2, 10).toUpperCase();
                 
-                await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'links', newId), {
-                    adminId: user.uid,
-                    message: secretMessage,
-                    duration: timerSeconds,
-                    created: serverTimestamp(),
-                    status: 'new',
-                    startedAt: null
-                });
+                let imageUrl = null;
+                let storagePath = null;
 
-                setGeneratedLink(newId);
-                setSecretMessage('');
+                try {
+                    // Upload Image if selected
+                    if (selectedImage) {
+                        storagePath = `secrets/${user.uid}/${newId}_${selectedImage.name}`;
+                        const storageRef = ref(storage, storagePath);
+                        await uploadBytes(storageRef, selectedImage);
+                        imageUrl = await getDownloadURL(storageRef);
+                    }
+
+                    // Save to Firestore
+                    await setDoc(doc(db, 'artifacts', appId, 'public', 'data', 'links', newId), {
+                        adminId: user.uid,
+                        message: secretMessage,
+                        imageUrl: imageUrl,
+                        storagePath: storagePath,
+                        duration: timerSeconds,
+                        created: serverTimestamp(),
+                        status: 'new',
+                        startedAt: null
+                    });
+
+                    setGeneratedLink(newId);
+                    setSecretMessage('');
+                    clearImage();
+                } catch (error) {
+                    console.error("Error creating link:", error);
+                    alert("เกิดข้อผิดพลาดในการอัปโหลด: " + error.message);
+                } finally {
+                    setIsUploading(false);
+                }
             };
 
             const formatTime = (seconds) => {
@@ -296,7 +362,6 @@
                 return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
             };
 
-            // Get Current URL for sharing
             const getShareUrl = (id) => {
                 const url = new URL(window.location.href);
                 url.searchParams.set('id', id);
@@ -382,13 +447,45 @@
 
                                     {!generatedLink ? (
                                         <div className="space-y-6">
+                                            {/* Text Input */}
                                             <div>
-                                                <label className="block text-xs text-gray-500 uppercase tracking-wider mb-2">ข้อความ (จะถูกลบเมื่อหมดเวลา)</label>
+                                                <label className="block text-xs text-gray-500 uppercase tracking-wider mb-2">ข้อความ (Optional)</label>
                                                 <textarea 
                                                     value={secretMessage}
                                                     onChange={(e) => setSecretMessage(e.target.value)}
-                                                    className="w-full h-32 bg-black border border-gray-700 rounded-xl p-4 text-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none resize-none transition-all"
+                                                    className="w-full h-24 bg-black border border-gray-700 rounded-xl p-4 text-white focus:border-emerald-500 focus:ring-1 focus:ring-emerald-500 focus:outline-none resize-none transition-all"
                                                     placeholder="พิมพ์ความลับของคุณ..."
+                                                />
+                                            </div>
+
+                                            {/* Image Upload */}
+                                            <div>
+                                                <label className="block text-xs text-gray-500 uppercase tracking-wider mb-2">รูปภาพ (Optional - ไม่จำกัดขนาด)</label>
+                                                {!imagePreview ? (
+                                                    <div 
+                                                        onClick={() => fileInputRef.current.click()}
+                                                        className="w-full h-32 border-2 border-dashed border-gray-700 rounded-xl flex flex-col items-center justify-center cursor-pointer hover:border-emerald-500 hover:bg-gray-800/50 transition-all group"
+                                                    >
+                                                        <ImageIcon className="w-8 h-8 text-gray-500 group-hover:text-emerald-500 mb-2" />
+                                                        <span className="text-sm text-gray-500 group-hover:text-gray-300">คลิกเพื่อเลือกรูปภาพ</span>
+                                                    </div>
+                                                ) : (
+                                                    <div className="relative w-full rounded-xl overflow-hidden border border-gray-700 group">
+                                                        <img src={imagePreview} alt="Preview" className="w-full h-auto max-h-[300px] object-contain bg-black/50" />
+                                                        <button 
+                                                            onClick={clearImage}
+                                                            className="absolute top-2 right-2 p-1 bg-red-600 rounded-full text-white opacity-0 group-hover:opacity-100 transition-opacity"
+                                                        >
+                                                            <X size={16} />
+                                                        </button>
+                                                    </div>
+                                                )}
+                                                <input 
+                                                    type="file" 
+                                                    ref={fileInputRef}
+                                                    onChange={handleImageSelect}
+                                                    accept="image/*"
+                                                    className="hidden" 
                                                 />
                                             </div>
                                             
@@ -409,10 +506,17 @@
 
                                             <button 
                                                 onClick={createLink}
-                                                disabled={!secretMessage}
-                                                className="w-full py-4 bg-white text-black font-bold rounded-xl hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg"
+                                                disabled={(!secretMessage && !selectedImage) || isUploading}
+                                                className="w-full py-4 bg-white text-black font-bold rounded-xl hover:bg-gray-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-lg flex items-center justify-center gap-2"
                                             >
-                                                สร้างลิงก์ลับ
+                                                {isUploading ? (
+                                                    <>
+                                                        <div className="w-5 h-5 border-2 border-black border-t-transparent rounded-full animate-spin"></div>
+                                                        กำลังอัปโหลด...
+                                                    </>
+                                                ) : (
+                                                    'สร้างลิงก์ลับ'
+                                                )}
                                             </button>
                                         </div>
                                     ) : (
@@ -453,6 +557,7 @@
                                                 onClick={() => {
                                                     setGeneratedLink(null);
                                                     setSecretMessage('');
+                                                    clearImage();
                                                 }}
                                                 className="text-gray-500 hover:text-white underline text-sm"
                                             >
@@ -478,6 +583,7 @@
                                                 <div>
                                                     <div className="flex items-center gap-3 mb-1">
                                                         <span className="font-mono text-emerald-500 font-bold">{item.id}</span>
+                                                        {item.imageUrl && <ImageIcon size={12} className="text-gray-400" />}
                                                         {item.status === 'new' && <span className="text-[10px] bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded-full border border-blue-500/20">ยังไม่ถูกเปิด</span>}
                                                         {item.status === 'viewed' && <span className="text-[10px] bg-yellow-500/20 text-yellow-400 px-2 py-0.5 rounded-full border border-yellow-500/20 animate-pulse">กำลังดู...</span>}
                                                         {item.status === 'expired' && <span className="text-[10px] bg-red-500/20 text-red-400 px-2 py-0.5 rounded-full border border-red-500/20">ลบแล้ว</span>}
@@ -541,7 +647,7 @@
                                         </span>
                                     </div>
 
-                                    {/* Message Content */}
+                                    {/* Content Card */}
                                     <div className="bg-gray-900/80 border border-gray-800 p-8 md:p-12 rounded-3xl shadow-2xl relative overflow-hidden group">
                                         <div className="absolute inset-0 bg-gradient-to-br from-emerald-500/5 to-transparent pointer-events-none"></div>
                                         
@@ -549,8 +655,25 @@
                                             Secure Transmission
                                         </h3>
                                         
-                                        <div className="text-2xl md:text-5xl font-bold text-white text-center leading-relaxed font-sans break-words min-h-[100px] flex items-center justify-center">
-                                            {linkData.message}
+                                        <div className="flex flex-col items-center gap-8">
+                                            {/* Image Display */}
+                                            {linkData.imageUrl && (
+                                                <div className="relative w-full rounded-xl overflow-hidden border border-gray-700 bg-black/50">
+                                                    <img 
+                                                        src={linkData.imageUrl} 
+                                                        alt="Secure Content" 
+                                                        className="w-full h-auto max-h-[70vh] object-contain pointer-events-none select-none"
+                                                        onContextMenu={(e) => e.preventDefault()}
+                                                    />
+                                                </div>
+                                            )}
+
+                                            {/* Text Display */}
+                                            {linkData.message && (
+                                                <div className="text-2xl md:text-4xl font-bold text-white text-center leading-relaxed font-sans break-words w-full">
+                                                    {linkData.message}
+                                                </div>
+                                            )}
                                         </div>
 
                                         <div className="mt-12 flex justify-center items-center gap-2 text-xs text-red-500/60 font-mono">
