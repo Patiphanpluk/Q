@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SmartLab - ระบบจองเครื่องมือวิทยาศาสตร์</title>
+    <title>SmartBooking - ระบบจองใช้งานทรัพยากร</title>
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <!-- Lucide Icons -->
@@ -11,7 +11,7 @@
     <!-- QR Code Scanner Library -->
     <script src="https://unpkg.com/html5-qrcode"></script>
     <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;900&family=Prompt:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Prompt:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     
     <script>
         tailwind.config = {
@@ -20,47 +20,52 @@
                     fontFamily: {
                         sans: ['Inter', 'Prompt', 'sans-serif'],
                     },
-                    borderRadius: {
-                        '4xl': '2rem',
-                        '5xl': '2.5rem',
-                    }
                 }
             }
         }
     </script>
 
     <style>
-        body { font-family: 'Prompt', sans-serif; overflow-x: hidden; }
+        body { font-family: 'Prompt', sans-serif; overflow-x: hidden; background-color: #f8fafc; }
         @keyframes scan-line {
-            0% { top: 10%; }
-            100% { top: 90%; }
+            0% { top: 15%; }
+            100% { top: 85%; }
         }
         .animate-scan-line {
             animation: scan-line 2s linear infinite;
         }
-        /* แก้ไขปัญหาเนื้อหาถูก Footer บัง (ยกระดับความสูง) */
-        main { padding-bottom: 200px; }
+        /* แก้ไขปัญหาเนื้อหาถูก Footer บัง เพิ่มระยะให้เลื่อนได้สุด */
+        main { padding-bottom: 240px; }
         #reader {
             width: 100% !important;
             border: none !important;
         }
         #reader video {
-            border-radius: 2rem;
+            border-radius: 1.5rem;
             object-fit: cover;
         }
         .ticket-cutout {
-            background-image: radial-gradient(circle at 0 50%, transparent 15px, white 16px), 
-                              radial-gradient(circle at 100% 50%, transparent 15px, white 16px);
+            background-image: radial-gradient(circle at 0 50%, transparent 10px, white 11px), 
+                              radial-gradient(circle at 100% 50%, transparent 10px, white 11px);
         }
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar { width: 5px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+        
+        /* เพิ่มความลื่นไหลให้กับการเปลี่ยนหน้า */
+        .page-transition {
+            animation: fadeIn 0.4s ease-out;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
     </style>
 </head>
-<body class="bg-slate-50 text-slate-900 min-h-screen">
+<body class="text-slate-900 min-h-screen">
 
     <div id="app">
         <div class="flex items-center justify-center min-h-screen text-indigo-600">
-            <div class="animate-spin rounded-full h-12 w-12 border-t-4 border-indigo-600 border-opacity-20"></div>
+            <div class="animate-spin rounded-full h-10 w-10 border-t-2 border-indigo-600 border-opacity-30"></div>
         </div>
     </div>
 
@@ -68,9 +73,9 @@
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
         import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import { getFirestore, doc, collection, onSnapshot, setDoc, addDoc, updateDoc, deleteDoc, serverTimestamp, query, where } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { getFirestore, doc, collection, onSnapshot, setDoc, addDoc, updateDoc, deleteDoc, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
 
-        // --- Firebase Configuration ---
+        // --- Configuration ---
         const firebaseConfig = {
             apiKey: "AIzaSyAYWIoMwtHmhhcEGloHX2pjX_wmv9Wj-O0",
             authDomain: "picture-30ba8.firebaseapp.com",
@@ -85,7 +90,7 @@
         const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
         const db = getFirestore(app);
-        const fbId = "booking-system-v7"; // Update schema version
+        const fbId = "smart-booking-v3"; 
 
         // --- App State ---
         window.state = {
@@ -94,8 +99,9 @@
             isLoggedIn: !!localStorage.getItem('student_id'),
             isAdmin: localStorage.getItem('is_admin') === 'true',
             settings: { 
-                projectName: "Project Lab 2024",
-                maxHoursPerPerson: 10,
+                projectName: "General Booking Project",
+                maxHoursPerDay: 2,
+                maxTotalHours: 10,
                 startTime: "09:00", 
                 endTime: "18:00", 
                 availableDays: [1, 2, 3, 4, 5], 
@@ -107,7 +113,7 @@
             selectedResource: null,
             selectedDate: new Date().toISOString().split('T')[0],
             selectedSlots: [],
-            view: 'selection',
+            view: 'selection', // selection, calendar, pass, scanner
             activeBookings: [],
             error: null,
             showQRModal: null,
@@ -117,7 +123,7 @@
         let html5QrScanner = null;
         const DAYS_TH = ["อาทิตย์", "จันทร์", "อังคาร", "พุธ", "พฤหัสบดี", "ศุกร์", "เสาร์"];
 
-        // --- Core Functions ---
+        // --- Core Logics ---
         async function init() {
             try {
                 await signInAnonymously(auth);
@@ -126,7 +132,7 @@
                     if (u) listenToData();
                 });
             } catch (err) {
-                showError("Firebase Connection Error: " + err.message);
+                showError("Connection Error: " + err.message);
             }
         }
 
@@ -151,7 +157,7 @@
             setTimeout(() => { window.state.error = null; render(); }, 6000);
         }
 
-        // --- Window Exposed Actions ---
+        // --- Exposed UI Actions ---
         window.render = render;
         window.setView = (v) => { 
             window.state.view = v; 
@@ -169,7 +175,7 @@
             if (input === "Admin123") {
                 window.state.isAdmin = true;
                 window.state.isLoggedIn = true;
-                window.state.studentId = "ADMIN";
+                window.state.studentId = "ADMIN_MODE";
                 localStorage.setItem('is_admin', 'true');
             } else if (input.length >= 5) {
                 window.state.isAdmin = false;
@@ -178,7 +184,7 @@
                 localStorage.setItem('student_id', input);
                 localStorage.setItem('is_admin', 'false');
             } else {
-                return showError("รหัสนักศึกษาไม่ถูกต้อง");
+                return showError("กรุณาระบุข้อมูลที่ถูกต้อง");
             }
             render();
         };
@@ -188,6 +194,7 @@
             window.state.studentId = ''; 
             window.state.isLoggedIn = false; 
             window.state.isAdmin = false;
+            window.state.view = 'selection';
             render(); 
         };
 
@@ -203,123 +210,123 @@
             if (index > -1) {
                 window.state.selectedSlots.splice(index, 1);
             } else {
-                const alreadyBooked = window.state.bookings.filter(b => b.studentId === window.state.studentId).length;
-                if (alreadyBooked + window.state.selectedSlots.length >= window.state.settings.maxHoursPerPerson) {
-                    return showError(`โควตาเต็ม! คุณจองได้สูงสุด ${window.state.settings.maxHoursPerPerson} ชม. ต่อโปรเจกต์`);
+                // Check Daily Quota
+                const dailyBooked = window.state.bookings.filter(b => b.studentId === window.state.studentId && b.date === window.state.selectedDate).length;
+                if (dailyBooked + window.state.selectedSlots.length >= window.state.settings.maxHoursPerDay) {
+                    return showError(`โควตารายวันเต็ม! คุณจองได้สูงสุด ${window.state.settings.maxHoursPerDay} ชม./วัน`);
+                }
+                // Check Total Project Quota
+                const totalBooked = window.state.bookings.filter(b => b.studentId === window.state.studentId).length;
+                if (totalBooked + window.state.selectedSlots.length >= window.state.settings.maxTotalHours) {
+                    return showError(`โควตารวมโปรเจกต์เต็ม! คุณจองได้สูงสุด ${window.state.settings.maxTotalHours} ชม. สำหรับงานนี้`);
                 }
                 window.state.selectedSlots.push(slot);
             }
             render();
         };
 
-        window.confirmBooking = async () => {
+        window.confirmBookingAction = async () => {
             if (window.state.selectedSlots.length === 0) return;
             try {
-                const newBookings = [];
+                const newItems = [];
                 for (const slot of window.state.selectedSlots) {
-                    const bookingData = {
+                    const data = {
                         resourceId: window.state.selectedResource.id,
                         resourceName: window.state.selectedResource.name,
                         date: window.state.selectedDate,
-                        slot, // Format: "09:00"
+                        slot,
                         studentId: window.state.studentId,
                         email: `${window.state.studentId}@kmitl.ac.th`,
                         status: 'booked',
                         createdAt: serverTimestamp()
                     };
-                    const docRef = await addDoc(collection(db, 'artifacts', fbId, 'public', 'data', 'bookings'), bookingData);
-                    newBookings.push({ id: docRef.id, ...bookingData });
+                    const docRef = await addDoc(collection(db, 'artifacts', fbId, 'public', 'data', 'bookings'), data);
+                    newItems.push({ id: docRef.id, ...data });
                 }
-                window.state.activeBookings = newBookings;
+                window.state.activeBookings = newItems;
                 window.state.selectedSlots = [];
                 window.state.view = 'pass';
                 render();
             } catch (err) {
-                showError("การจองล้มเหลว: " + err.message);
+                showError("จองไม่สำเร็จ: " + err.message);
             }
         };
 
-        window.initScannerAutomatically = () => {
+        window.initBookingScanner = () => {
             if (window.state.isScanning) return;
             window.state.isScanning = true;
             html5QrScanner = new Html5QrcodeScanner("reader", { 
                 fps: 20, 
-                qrbox: { width: 250, height: 250 },
-                rememberLastUsedCamera: true
+                qrbox: { width: 250, height: 250 }
             });
             html5QrScanner.render((decodedText) => {
                 const targetId = window.state.activeBookings[0]?.resourceId;
                 if (decodedText === targetId) {
-                    // Time Check
-                    if (isCurrentTimeMatchingBooking()) {
+                    if (isCheckInTimeValid()) {
                         html5QrScanner.clear().then(() => {
                             window.state.isScanning = false;
-                            window.processCheckIn(targetId);
+                            window.processBookingCheckIn(targetId);
                         });
                     } else {
-                        showError("ไม่สามารถเช็คอินได้: ยังไม่ถึงเวลาที่คุณจอง หรือเลยเวลาไปแล้ว");
+                        showError("เช็คอินล้มเหลว: ยังไม่ถึงเวลาที่คุณจอง หรือเลยเวลาไปแล้ว");
                     }
                 } else {
-                    showError("QR Code ไม่ถูกต้อง: อุปกรณ์นี้ไม่ใช่เครื่องที่คุณจองไว้");
+                    showError("QR ไม่ตรงกับอุปกรณ์ที่คุณจอง");
                 }
             }, (err) => {});
         };
 
-        const isCurrentTimeMatchingBooking = () => {
+        const isCheckInTimeValid = () => {
             const now = new Date();
-            const today = now.toISOString().split('T')[0];
+            const todayStr = now.toISOString().split('T')[0];
             const currentHour = now.getHours();
-            
             return window.state.activeBookings.some(b => {
                 const bHour = parseInt(b.slot.split(':')[0]);
-                return b.date === today && currentHour === bHour;
+                return b.date === todayStr && currentHour === bHour;
             });
         };
 
-        window.processCheckIn = async (resId) => {
+        window.processBookingCheckIn = async (resId) => {
             for (const b of window.state.activeBookings) {
                 await updateDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'bookings', b.id), {
-                    status: 'checked_in',
-                    checkInAt: new Date().toISOString()
+                    status: 'checked_in', checkInAt: new Date().toISOString()
                 });
             }
             await updateDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'resources', resId), {
-                status: 'in_use',
-                currentStudent: window.state.studentId,
-                startedAt: new Date().toISOString()
+                status: 'in_use', currentStudent: window.state.studentId, startedAt: new Date().toISOString()
             });
             window.state.view = 'selection';
             window.state.selectedResource = null;
             window.state.activeBookings = [];
-            alert("เช็คอินสำเร็จ! ระบบกำลังบันทึกประวัติการใช้งานของคุณ");
+            alert("เช็คอินสำเร็จ! ระบบเริ่มบันทึกเวลาการเข้างานของคุณ");
             render();
         };
 
-        window.stopResourceUsage = async (id) => {
+        window.releaseResource = async (id) => {
             await updateDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'resources', id), {
                 status: 'idle', currentStudent: null, startedAt: null
             });
         };
 
-        window.saveProjectSettings = async (e) => {
+        window.saveAdminConfig = async (e) => {
             e.preventDefault();
             const f = new FormData(e.target);
             const days = DAYS_TH.map((_, i) => f.get(`day-${i}`) ? i : null).filter(x => x !== null);
             await setDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'settings', 'global_config'), {
                 projectName: f.get('projectName'),
-                maxHoursPerPerson: parseInt(f.get('maxHours')),
+                maxHoursPerDay: parseInt(f.get('maxHoursDay')),
+                maxTotalHours: parseInt(f.get('maxHoursTotal')),
                 startTime: f.get('startTime'),
                 endTime: f.get('endTime'),
                 startDate: f.get('startDate'),
                 endDate: f.get('endDate'),
                 availableDays: days
             });
-            alert("บันทึกการตั้งค่าโปรเจกต์เรียบร้อย");
-            window.state.isAdmin = true; // Stay in admin
+            alert("บันทึกการตั้งค่าแล้ว");
             render();
         };
 
-        window.addResource = async (e) => {
+        window.addNewResource = async (e) => {
             e.preventDefault();
             const name = e.target.resName.value.trim();
             if (!name) return;
@@ -327,30 +334,20 @@
             e.target.reset();
         };
 
-        window.deleteBookingItem = async (id) => {
-            if(confirm("ลบรายการจองนี้?")) await deleteDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'bookings', id));
+        window.deleteBookingEntry = async (id) => {
+            if(confirm("ลบการจองนี้หรือไม่?")) await deleteDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'bookings', id));
         };
 
-        window.clearHistoryTotal = async () => {
-            if(confirm("ล้างประวัติการจองและเช็คอินทั้งหมด? (ไม่สามารถกู้คืนได้)")) {
+        window.wipeAllHistory = async () => {
+            if(confirm("ต้องการลบประวัติทั้งหมดใช่หรือไม่?")) {
                 for (const b of window.state.bookings) await deleteDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'bookings', b.id));
-            }
-        };
-
-        window.clearHistoryByDay = async () => {
-            const date = prompt("ระบุวันที่ที่ต้องการล้าง (YYYY-MM-DD):");
-            if (date) {
-                const toDel = window.state.bookings.filter(b => b.date === date);
-                for (const b of toDel) await deleteDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'bookings', b.id));
-                alert(`ลบรายการของวันที่ ${date} เรียบร้อย`);
             }
         };
 
         window.openQRModal = (id, name) => { window.state.showQRModal = { id, name }; render(); };
         window.closeQRModal = () => { window.state.showQRModal = null; render(); };
 
-        // --- Render Helpers ---
-        const isDateInService = () => {
+        const isDateInActiveService = () => {
             const dateObj = new Date(window.state.selectedDate);
             const dayOfWeek = dateObj.getDay();
             const isInRange = (!window.state.settings.startDate || window.state.selectedDate >= window.state.settings.startDate) &&
@@ -366,32 +363,31 @@
             } else {
                 appDiv.innerHTML = `
                     ${renderHeader()}
-                    <main class="max-w-3xl mx-auto px-6 py-10">
+                    <main class="max-w-xl mx-auto px-4 py-6 md:py-8 page-transition">
                         ${window.state.error ? renderError() : ''}
-                        ${window.state.isAdmin ? renderAdminView() : renderUserView()}
+                        ${window.state.isAdmin ? renderAdminUI() : renderUserUI()}
                     </main>
                     ${renderFooter()}
                     ${window.state.showQRModal ? renderQRModal() : ''}
                 `;
             }
             lucide.createIcons();
-            if (window.state.view === 'scanner') setTimeout(window.initScannerAutomatically, 100);
+            if (window.state.view === 'scanner') setTimeout(window.initBookingScanner, 100);
         }
 
         function renderLogin() {
             return `
-                <div class="min-h-screen flex items-center justify-center p-6 text-center">
-                    <div class="max-w-md w-full bg-white rounded-[3rem] p-12 shadow-2xl border border-slate-100 animate-in fade-in zoom-in duration-500">
-                        <div class="w-24 h-24 bg-indigo-600 rounded-[2.5rem] flex items-center justify-center text-white mx-auto mb-8 shadow-xl shadow-indigo-100"><i data-lucide="shield-check" size="48"></i></div>
-                        <h1 class="text-4xl font-black text-slate-800 mb-2">SmartLab</h1>
-                        <p class="text-slate-400 text-sm font-medium mb-12 tracking-widest uppercase">ระบบจัดการเครื่องมือวิจัย</p>
+                <div class="min-h-screen flex items-center justify-center p-6">
+                    <div class="max-w-sm w-full bg-white rounded-3xl p-8 shadow-xl border border-slate-100 text-center animate-in fade-in zoom-in duration-300">
+                        <div class="w-16 h-16 bg-indigo-600 rounded-2xl flex items-center justify-center text-white mx-auto mb-6 shadow-lg shadow-indigo-100"><i data-lucide="user-check" size="32"></i></div>
+                        <h1 class="text-3xl font-bold text-slate-800 mb-1 leading-tight">SmartBooking</h1>
+                        <p class="text-slate-400 text-xs font-medium mb-10 tracking-widest uppercase">Identity Pass</p>
                         <form onsubmit="handleLogin(event)" class="space-y-6">
                             <div class="text-left space-y-2">
-                                <label class="text-[10px] font-black uppercase text-slate-400 ml-4 tracking-[0.2em]">Identification</label>
-                                <input id="login_sid" type="text" placeholder="รหัสนักศึกษา หรือ รหัสแอดมิน" class="w-full p-6 rounded-[1.5rem] bg-slate-50 border-2 border-slate-100 text-xl font-bold outline-none focus:border-indigo-500 transition-all text-center" required>
+                                <label class="text-[10px] font-bold uppercase text-slate-400 ml-4 tracking-widest">Identification</label>
+                                <input id="login_sid" type="text" placeholder="รหัสนักศึกษา" class="w-full p-4 rounded-2xl bg-slate-50 border border-slate-100 font-bold outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-center placeholder:text-slate-300 shadow-inner" required>
                             </div>
-                            <button type="submit" class="w-full py-5 bg-indigo-600 text-white font-black rounded-[1.5rem] shadow-xl hover:bg-indigo-700 active:scale-95 transition-all text-lg border-b-4 border-indigo-800">เข้าสู่ระบบ</button>
-                            <p class="text-[10px] text-slate-300 font-bold uppercase tracking-widest mt-6">KMITL Engineering • 2024</p>
+                            <button type="submit" class="w-full py-4 bg-indigo-600 text-white font-bold rounded-2xl shadow-lg hover:bg-indigo-700 transition-all active:scale-95 text-lg">เริ่มต้นใช้งาน</button>
                         </form>
                     </div>
                 </div>
@@ -400,63 +396,61 @@
 
         function renderHeader() {
             return `
-                <header class="bg-white/80 backdrop-blur-xl border-b border-slate-100 sticky top-0 z-50">
-                    <div class="max-w-3xl mx-auto px-6 h-20 flex items-center justify-between">
-                        <div class="flex items-center gap-3 cursor-pointer group" onclick="setView('selection'); window.state.selectedResource=null; render();">
-                            <div class="w-11 h-11 bg-indigo-600 rounded-2xl flex items-center justify-center text-white shadow-lg shadow-indigo-100 active:scale-90 transition-transform"><i data-lucide="binary" size="22"></i></div>
+                <header class="bg-white/80 backdrop-blur-md border-b border-slate-100 sticky top-0 z-50">
+                    <div class="max-w-2xl mx-auto px-4 h-16 flex items-center justify-between">
+                        <div class="flex items-center gap-2 cursor-pointer group" onclick="setView('selection'); window.state.selectedResource=null; render();">
+                            <div class="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-md active:scale-90 transition-transform"><i data-lucide="layers" size="18"></i></div>
                             <div>
-                                <h1 class="font-black text-xl leading-none text-slate-800">SmartLab</h1>
-                                <p class="text-[9px] font-black text-slate-400 uppercase tracking-widest mt-1">${window.state.settings.projectName}</p>
+                                <h1 class="font-bold text-base leading-none text-slate-800">SmartBooking</h1>
+                                <p class="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-1">${window.state.settings.projectName}</p>
                             </div>
                         </div>
-                        <div class="flex items-center gap-4">
-                            <button onclick="logout()" class="p-3 bg-slate-100 text-slate-400 hover:text-red-500 rounded-2xl transition-all active:scale-90"><i data-lucide="power" size="20"></i></button>
-                        </div>
+                        <button onclick="logout()" class="p-2 bg-slate-50 text-slate-400 hover:text-red-500 rounded-xl border border-slate-100 active:scale-90 transition-all"><i data-lucide="log-out" size="18"></i></button>
                     </div>
                 </header>
             `;
         }
 
-        function renderUserView() {
-            if (window.state.view === 'scanner') return renderScanner();
-            if (window.state.view === 'pass') return renderReceipt();
-            if (!window.state.selectedResource) return renderResourceMenu();
-            return renderBookingGrid();
+        function renderUserUI() {
+            if (window.state.view === 'scanner') return renderScannerUI();
+            if (window.state.view === 'pass') return renderReceiptUI();
+            if (!window.state.selectedResource) return renderResourcesUI();
+            return renderCalendarUI();
         }
 
-        function renderResourceMenu() {
+        function renderResourcesUI() {
             return `
-                <div class="space-y-8 animate-in fade-in duration-500">
-                    <div class="bg-indigo-600 p-10 rounded-[3rem] text-white shadow-2xl relative overflow-hidden shadow-indigo-100">
-                        <div class="absolute -top-10 -right-10 w-48 h-48 bg-white/10 rounded-full blur-3xl"></div>
-                        <p class="text-[10px] font-black uppercase tracking-[0.2em] opacity-60 mb-2">Authenticated Student</p>
-                        <h2 class="text-4xl font-black mb-1">${window.state.studentId}</h2>
-                        <div class="flex items-center gap-2 text-indigo-200 text-[10px] font-black mt-8 bg-white/10 w-fit px-4 py-2 rounded-2xl border border-white/5 uppercase tracking-widest">
-                            <div class="w-2 h-2 bg-green-400 rounded-full animate-pulse shadow-[0_0_10px_#4ade80]"></div>
-                            <span>Online • Real-time Monitoring</span>
+                <div class="space-y-6">
+                    <div class="bg-indigo-600 p-6 rounded-3xl text-white shadow-xl relative overflow-hidden">
+                        <div class="absolute -top-10 -right-10 w-40 h-40 bg-white/10 rounded-full blur-3xl"></div>
+                        <p class="text-[9px] font-bold uppercase tracking-widest opacity-60 mb-1 leading-none">Session Identity</p>
+                        <h2 class="text-3xl font-black tracking-tighter leading-none">${window.state.studentId}</h2>
+                        <div class="flex items-center gap-2 text-indigo-200 text-[10px] font-bold mt-6 bg-white/10 w-fit px-3 py-1.5 rounded-xl border border-white/5 uppercase tracking-wider">
+                            <div class="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse shadow-[0_0_8px_#4ade80]"></div>
+                            <span>Cloud Live Synced</span>
                         </div>
                     </div>
                     
-                    <h3 class="text-[11px] font-black text-slate-400 uppercase tracking-[0.3em] ml-2 mb-2">เลือกอุปกรณ์ที่ต้องการใช้งาน</h3>
-                    <div class="grid grid-cols-1 gap-4">
+                    <h3 class="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1 leading-none">รายการทรัพยากร / สถานที่</h3>
+                    <div class="grid grid-cols-1 gap-3">
                         ${window.state.resources.map(res => `
-                            <button onclick="selectResource('${res.id}', '${res.name}')" class="group bg-white p-6 rounded-[2.5rem] border border-slate-100 shadow-sm hover:shadow-2xl hover:border-indigo-200 transition-all text-left flex items-center justify-between">
-                                <div class="flex items-center gap-5">
-                                    <div class="w-16 h-16 rounded-[1.5rem] flex items-center justify-center transition-all ${res.status === 'in_use' ? 'bg-orange-50 text-orange-500' : 'bg-slate-50 text-slate-400 group-hover:bg-indigo-600 group-hover:text-white'} shadow-inner">
-                                        <i data-lucide="cpu" size="32"></i>
+                            <button onclick="selectResource('${res.id}', '${res.name}')" class="group bg-white p-4 rounded-2xl border border-slate-100 shadow-sm hover:shadow-md hover:border-indigo-200 transition-all text-left flex items-center justify-between">
+                                <div class="flex items-center gap-4">
+                                    <div class="w-11 h-11 rounded-xl flex items-center justify-center transition-all ${res.status === 'in_use' ? 'bg-orange-50 text-orange-500' : 'bg-slate-50 text-slate-400 group-hover:bg-indigo-600 group-hover:text-white'}">
+                                        <i data-lucide="map-pin" size="20"></i>
                                     </div>
                                     <div>
-                                        <h3 class="font-bold text-xl text-slate-800">${res.name}</h3>
-                                        <div class="flex items-center gap-2 mt-1.5">
+                                        <h3 class="font-bold text-base text-slate-800 leading-tight">${res.name}</h3>
+                                        <div class="flex items-center gap-1.5 mt-0.5 leading-none">
                                             <div class="w-2 h-2 rounded-full ${res.status === 'in_use' ? 'bg-orange-400 animate-pulse' : 'bg-green-400'}"></div>
-                                            <span class="text-[10px] font-black uppercase tracking-widest ${res.status === 'in_use' ? 'text-orange-500' : 'text-green-500'}">
-                                                ${res.status === 'in_use' ? `กำลังใช้งานโดย ${res.currentStudent}` : 'ว่าง (Available)'}
+                                            <span class="text-[9px] font-bold uppercase tracking-widest ${res.status === 'in_use' ? 'text-orange-500' : 'text-green-500'}">
+                                                ${res.status === 'in_use' ? `In Use by ${res.currentStudent}` : 'Ready'}
                                             </span>
                                         </div>
                                     </div>
                                 </div>
-                                <div class="w-12 h-12 rounded-full bg-slate-50 flex items-center justify-center text-slate-300 group-hover:bg-indigo-50 group-hover:text-indigo-600 transition-all active:scale-90">
-                                    <i data-lucide="arrow-right" size="24"></i>
+                                <div class="w-8 h-8 rounded-full flex items-center justify-center text-slate-200 group-hover:text-indigo-600 transition-all">
+                                    <i data-lucide="chevron-right" size="20"></i>
                                 </div>
                             </button>
                         `).join('')}
@@ -465,81 +459,89 @@
             `;
         }
 
-        function renderBookingGrid() {
+        function renderCalendarUI() {
             const startH = parseInt(window.state.settings.startTime.split(':')[0]);
             const endH = parseInt(window.state.settings.endTime.split(':')[0]);
             const slots = [];
             for(let i=startH; i<endH; i++) slots.push(`${i.toString().padStart(2, '0')}:00`);
             
-            const bookedHours = window.state.bookings.filter(b => b.studentId === window.state.studentId).length;
+            const bookedDaily = window.state.bookings.filter(b => b.studentId === window.state.studentId && b.date === window.state.selectedDate).length;
+            const bookedTotal = window.state.bookings.filter(b => b.studentId === window.state.studentId).length;
 
             return `
-                <div class="space-y-6 animate-in slide-in-from-right-4 duration-300">
-                    <button onclick="setView('selection'); window.state.selectedResource=null; render();" class="flex items-center gap-2 bg-white px-8 py-4 rounded-full border border-slate-100 text-slate-400 hover:text-indigo-600 text-[10px] font-black uppercase tracking-[0.2em] shadow-sm active:scale-95 transition-all"><i data-lucide="chevron-left" size="18"></i> ย้อนกลับไปเลือกเครื่อง</button>
+                <div class="space-y-4">
+                    <button onclick="setView('selection'); window.state.selectedResource=null; render();" class="flex items-center gap-2 text-slate-400 hover:text-indigo-600 text-[10px] font-bold uppercase tracking-widest active:scale-95 transition-all"><i data-lucide="arrow-left" size="14"></i> เปลี่ยนจุดจอง</button>
                     
-                    <div class="bg-white p-10 rounded-[3rem] border border-slate-100 shadow-xl space-y-10">
-                        <div class="flex items-center gap-5 text-indigo-600">
-                            <div class="w-14 h-14 bg-indigo-50 rounded-2xl flex items-center justify-center shadow-inner"><i data-lucide="calendar-check-2" size="28"></i></div>
+                    <div class="bg-white p-6 rounded-3xl border border-slate-100 shadow-xl space-y-6">
+                        <div class="flex items-center gap-3 text-indigo-600 leading-none">
+                            <div class="w-9 h-9 bg-indigo-50 rounded-lg flex items-center justify-center"><i data-lucide="calendar" size="18"></i></div>
                             <div>
-                                <h2 class="text-3xl font-black text-slate-800 tracking-tight">${window.state.selectedResource.name}</h2>
-                                <p class="text-[10px] font-bold text-slate-400 uppercase tracking-[0.3em]">ระบบลงทะเบียนจองล่วงหน้า</p>
+                                <h2 class="text-lg font-bold text-slate-800">${window.state.selectedResource.name}</h2>
+                                <p class="text-[8px] font-bold text-slate-400 uppercase tracking-widest mt-1">Resource Schedule</p>
                             </div>
                         </div>
                         
-                        <div class="space-y-3">
-                            <label class="text-[10px] font-black uppercase text-slate-400 ml-4 block tracking-widest">เลือกวันที่ใช้บริการ</label>
-                            <input type="date" value="${window.state.selectedDate}" onchange="window.state.selectedDate=this.value; window.state.selectedSlots=[]; render();" class="w-full p-6 rounded-[2rem] bg-slate-50 border-2 border-slate-100 font-black text-2xl text-slate-800 outline-none focus:border-indigo-500 transition-all shadow-inner">
+                        <div class="space-y-1">
+                            <label class="text-[9px] font-bold uppercase text-slate-400 ml-2">ระบุวันที่</label>
+                            <input type="date" value="${window.state.selectedDate}" onchange="window.state.selectedDate=this.value; window.state.selectedSlots=[]; render();" class="w-full p-3.5 rounded-xl bg-slate-50 border border-slate-100 font-bold text-slate-800 text-center shadow-inner outline-none focus:ring-1 focus:ring-indigo-300">
                         </div>
 
-                        ${!isDateInService() ? `
-                            <div class="p-16 bg-orange-50 border-2 border-orange-100 rounded-[3rem] text-center space-y-4">
-                                <i data-lucide="calendar-x" size="64" class="mx-auto text-orange-300 opacity-60"></i>
-                                <p class="font-black text-2xl text-orange-700">ไม่อยู่ในช่วงวันให้บริการ</p>
-                                <p class="text-sm text-orange-600 font-medium leading-relaxed opacity-80">โปรเจกต์นี้ไม่ได้เปิดให้จองในวันหรือช่วงเวลาที่คุณระบุ <br/>กรุณาตรวจสอบวันทำการจากหน้าแรก</p>
+                        ${!isDateInActiveService() ? `
+                            <div class="p-10 bg-orange-50 rounded-2xl text-center space-y-2">
+                                <i data-lucide="clock-alert" size="32" class="mx-auto text-orange-300"></i>
+                                <p class="font-bold text-orange-700 text-sm">ไม่เปิดให้บริการ</p>
+                                <p class="text-[10px] text-orange-600 leading-relaxed opacity-70">กรุณาเลือกวันที่ตรงกับตารางโครงการ</p>
                             </div>
                         ` : `
-                            <div class="bg-indigo-600 p-8 rounded-[2.5rem] text-white shadow-xl shadow-indigo-100 relative overflow-hidden">
-                                <div class="flex justify-between items-end mb-4">
-                                    <span class="text-[11px] font-black uppercase tracking-widest opacity-60">Project Total Quota Usage</span>
-                                    <span class="text-4xl font-black">${bookedHours + window.state.selectedSlots.length} <span class="text-xl opacity-40">/ ${window.state.settings.maxHoursPerPerson} hr</span></span>
+                            <div class="grid grid-cols-2 gap-3">
+                                <div class="bg-indigo-600 p-4 rounded-2xl text-white shadow-md relative overflow-hidden">
+                                    <p class="text-[8px] font-bold uppercase opacity-60 mb-1 leading-none">Daily Quota</p>
+                                    <p class="text-2xl font-black leading-none">${bookedDaily + window.state.selectedSlots.length} / ${window.state.settings.maxHoursPerDay} <span class="text-[10px] opacity-40">ชม.</span></p>
+                                    <div class="w-full h-1 bg-white/20 rounded-full mt-3 overflow-hidden shadow-inner">
+                                        <div class="h-full bg-white transition-all" style="width: ${((bookedDaily + window.state.selectedSlots.length) / window.state.settings.maxHoursPerDay) * 100}%"></div>
+                                    </div>
                                 </div>
-                                <div class="w-full h-3 bg-white/20 rounded-full overflow-hidden shadow-inner">
-                                    <div class="h-full bg-white transition-all duration-1000 shadow-[0_0_15px_#fff]" style="width: ${((bookedHours + window.state.selectedSlots.length) / window.state.settings.maxHoursPerPerson) * 100}%"></div>
+                                <div class="bg-slate-900 p-4 rounded-2xl text-white shadow-md relative overflow-hidden">
+                                    <p class="text-[8px] font-bold uppercase opacity-60 mb-1 leading-none">Total Quota</p>
+                                    <p class="text-2xl font-black leading-none">${bookedTotal + window.state.selectedSlots.length} / ${window.state.settings.maxTotalHours} <span class="text-[10px] opacity-40">ชม.</span></p>
+                                    <div class="w-full h-1 bg-indigo-500/30 rounded-full mt-3 overflow-hidden shadow-inner">
+                                        <div class="h-full bg-indigo-400 transition-all" style="width: ${((bookedTotal + window.state.selectedSlots.length) / window.state.settings.maxTotalHours) * 100}%"></div>
+                                    </div>
                                 </div>
                             </div>
 
-                            <div class="grid grid-cols-1 gap-4">
+                            <div class="grid grid-cols-1 gap-2.5">
                                 ${slots.map(slot => {
                                     const bOthers = window.state.bookings.find(b => b.date === window.state.selectedDate && b.slot === slot && b.resourceId === window.state.selectedResource.id && b.studentId !== window.state.studentId);
                                     const bMine = window.state.bookings.find(b => b.date === window.state.selectedDate && b.slot === slot && b.resourceId === window.state.selectedResource.id && b.studentId === window.state.studentId);
                                     const isSelecting = window.state.selectedSlots.includes(slot);
                                     
-                                    let btnClass = "bg-white border-slate-100 text-slate-600 hover:border-indigo-300 hover:bg-slate-50 shadow-sm";
-                                    let statusText = "ว่าง (Available)";
+                                    let btnClass = "bg-white border-slate-100 text-slate-500 hover:border-indigo-300 active:scale-[0.98]";
+                                    let statusText = "Ready to Book";
                                     let action = `toggleSlotSelection('${slot}')`;
 
                                     if (bOthers) {
-                                        btnClass = "bg-slate-100 border-slate-100 text-slate-300 opacity-40 cursor-not-allowed";
-                                        statusText = `จองแล้วโดย Std:${bOthers.studentId.slice(-4)}`;
+                                        btnClass = "bg-slate-100 border-slate-100 text-slate-300 opacity-50 cursor-not-allowed";
+                                        statusText = `Booked by ID:${bOthers.studentId.slice(-4)}`;
                                         action = "";
                                     } else if (bMine) {
                                         btnClass = "bg-green-50 border-green-500 text-green-700 shadow-sm";
-                                        statusText = "จองแล้ว (คลิกที่นี่เพื่อยกเลิก)";
-                                        action = `deleteBookingItem('${bMine.id}')`;
+                                        statusText = "จองแล้ว (คลิกเพื่อยกเลิก)";
+                                        action = `deleteBookingEntry('${bMine.id}')`;
                                     } else if (isSelecting) {
-                                        btnClass = "bg-indigo-600 border-indigo-600 text-white shadow-2xl scale-[1.03] z-10 ring-4 ring-indigo-200";
-                                        statusText = "เลือกอยู่ (Selected)";
+                                        btnClass = "bg-indigo-600 border-indigo-600 text-white shadow-md scale-[1.01] z-10";
+                                        statusText = "Selected";
                                         action = `toggleSlotSelection('${slot}')`;
                                     }
 
                                     return `
-                                        <button onclick="${action}" class="relative p-7 rounded-[2rem] border-2 transition-all flex justify-between items-center ${btnClass}">
-                                            <div class="text-left">
-                                                <span class="text-2xl font-black">${slot} - ${slot.split(':')[0]}:59</span>
-                                                <p class="text-[10px] font-black uppercase tracking-wider mt-1.5 opacity-80">${statusText}</p>
+                                        <button onclick="${action}" class="relative p-4 rounded-xl border-2 transition-all flex justify-between items-center ${btnClass}">
+                                            <div class="text-left leading-none">
+                                                <span class="text-base font-bold">${slot} - ${slot.split(':')[0]}:59</span>
+                                                <p class="text-[8px] font-bold uppercase mt-1 opacity-60">${statusText}</p>
                                             </div>
-                                            <div class="w-12 h-12 rounded-full flex items-center justify-center ${bMine || isSelecting ? 'bg-white/20' : 'bg-slate-100'} shadow-inner transition-transform active:scale-90">
-                                                ${bMine || isSelecting ? '<i data-lucide="check" size="28"></i>' : '<i data-lucide="plus" size="28" class="opacity-30"></i>'}
+                                            <div class="w-7 h-7 rounded-full flex items-center justify-center ${bMine || isSelecting ? 'bg-white/20' : 'bg-slate-50'} shadow-inner transition-transform active:scale-75">
+                                                ${bMine || isSelecting ? '<i data-lucide="check" size="14"></i>' : '<i data-lucide="plus" size="14" class="opacity-30"></i>'}
                                             </div>
                                         </button>
                                     `;
@@ -547,10 +549,10 @@
                             </div>
 
                             ${window.state.selectedSlots.length > 0 ? `
-                                <div class="fixed bottom-32 left-0 right-0 px-8 z-40 max-w-3xl mx-auto">
-                                    <button onclick="confirmBooking()" class="w-full py-6 bg-indigo-600 text-white font-black rounded-[2.5rem] shadow-[0_25px_60px_rgba(79,70,229,0.4)] animate-in slide-in-from-bottom-10 transition-all active:scale-95 text-2xl flex items-center justify-center gap-4 border-t-4 border-indigo-400">
-                                        <i data-lucide="lock" size="28"></i>
-                                        ยืนยันการจองทั้งสิ้น ${window.state.selectedSlots.length} ชม.
+                                <div class="fixed bottom-28 left-0 right-0 px-6 z-40 max-w-xl mx-auto animate-in slide-in-from-bottom-10">
+                                    <button onclick="confirmBookingAction()" class="w-full py-4 bg-indigo-600 text-white font-bold rounded-2xl shadow-xl transition-all active:scale-95 text-lg flex items-center justify-center gap-3 border-b-4 border-indigo-800">
+                                        <i data-lucide="check-square" size="20"></i>
+                                        ยืนยันจอง ${window.state.selectedSlots.length} ช่วงเวลา
                                     </button>
                                 </div>
                             ` : ''}
@@ -560,43 +562,41 @@
             `;
         }
 
-        function renderReceipt() {
+        function renderReceiptUI() {
             const dateStr = window.state.activeBookings[0]?.date;
             const resName = window.state.activeBookings[0]?.resourceName;
 
             return `
-                <div class="max-w-md mx-auto py-4 animate-in zoom-in duration-500">
-                    <div class="bg-white rounded-[4rem] overflow-hidden shadow-2xl border border-slate-100 relative">
-                        <div class="bg-indigo-600 p-12 text-white text-center relative overflow-hidden">
-                            <div class="absolute inset-0 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')] opacity-10"></div>
-                            <div class="w-20 h-20 bg-white/20 rounded-[2rem] flex items-center justify-center mx-auto mb-6 backdrop-blur-md border border-white/20 shadow-xl"><i data-lucide="check-circle" size="44"></i></div>
-                            <h2 class="text-4xl font-black mb-1">จองสำเร็จ</h2>
-                            <p class="text-indigo-200 text-[10px] font-black uppercase tracking-[0.4em]">Official Research Booking</p>
+                <div class="max-w-sm mx-auto py-2 animate-in zoom-in duration-500">
+                    <div class="bg-white rounded-3xl overflow-hidden shadow-2xl border border-slate-100 relative">
+                        <div class="bg-indigo-600 p-8 text-white text-center relative overflow-hidden">
+                            <i data-lucide="shield-check" size="36" class="mx-auto mb-3 opacity-60"></i>
+                            <h2 class="text-2xl font-bold mb-0.5">จองสำเร็จ</h2>
+                            <p class="text-indigo-200 text-[8px] font-bold uppercase tracking-widest opacity-60 leading-none">Booking Identification Pass</p>
                         </div>
-                        <div class="p-10 space-y-8 ticket-cutout">
-                            <div class="space-y-8">
-                                <div class="pb-6 border-b-2 border-slate-50"><p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Equipment</p><p class="text-3xl font-black text-slate-800 leading-tight">${resName}</p></div>
-                                <div class="grid grid-cols-2 gap-8">
-                                    <div><p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Holder ID</p><p class="text-xl font-black text-slate-800">${window.state.studentId}</p></div>
-                                    <div><p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Date</p><p class="text-xl font-black text-slate-800">${dateStr}</p></div>
+                        <div class="p-8 space-y-6 ticket-cutout">
+                            <div class="space-y-5">
+                                <div class="pb-4 border-b border-slate-100"><p class="text-[9px] font-bold text-slate-400 uppercase mb-1">อุปกรณ์ / สถานที่</p><p class="text-xl font-bold text-slate-800 leading-tight">${resName}</p></div>
+                                <div class="grid grid-cols-2 gap-4">
+                                    <div><p class="text-[9px] font-bold text-slate-400 uppercase mb-1 leading-none">รหัสผู้จอง</p><p class="text-base font-bold">${window.state.studentId}</p></div>
+                                    <div><p class="text-[9px] font-bold text-slate-400 uppercase mb-1 leading-none">วันที่</p><p class="text-base font-bold">${dateStr}</p></div>
                                 </div>
-                                <div class="text-center bg-slate-50 p-6 rounded-[2rem] border border-slate-100">
-                                    <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-3">จองช่วงเวลา</p>
+                                <div class="bg-slate-50 p-4 rounded-2xl border border-slate-100 text-center">
+                                    <p class="text-[9px] font-bold text-slate-400 uppercase mb-3 leading-none">ช่วงเวลาที่ได้รับการอนุมัติ</p>
                                     <div class="flex flex-wrap justify-center gap-2">
-                                        ${window.state.activeBookings.map(b => `<span class="bg-indigo-600 text-white px-4 py-1.5 rounded-full text-xs font-black shadow-sm">${b.slot}</span>`).join('')}
+                                        ${window.state.activeBookings.map(b => `<span class="bg-indigo-600 text-white px-3 py-1 rounded-full text-[10px] font-bold">${b.slot}</span>`).join('')}
                                     </div>
-                                    <div class="mt-8 flex items-center gap-3 justify-center text-blue-600 bg-white p-4 rounded-2xl shadow-sm border border-blue-50">
-                                        <i data-lucide="image" size="20"></i>
-                                        <p class="text-[9px] font-bold uppercase tracking-wider text-left">ส่งสรุปหลักฐานพร้อมรูปเวลาไปที่ <br/><span class="text-xs font-black">${window.state.studentId}@kmitl.ac.th</span></p>
+                                    <div class="mt-6 flex items-center gap-2 justify-center text-blue-600 bg-white p-3 rounded-xl border border-blue-50">
+                                        <i data-lucide="check-circle" size="14"></i>
+                                        <p class="text-[8px] font-bold uppercase leading-none">เมลส่งไปที่ ${window.state.studentId}@kmitl.ac.th</p>
                                     </div>
                                 </div>
                             </div>
-                            <div class="pt-10 border-t-4 border-dashed border-slate-100">
-                                <button onclick="setView('scanner')" class="w-full py-6 bg-slate-900 text-white font-black rounded-[2.5rem] flex items-center justify-center gap-4 shadow-xl hover:bg-black transition-all active:scale-95 group">
-                                    <i data-lucide="qr-code" size="28" class="group-hover:rotate-12 transition-transform"></i> 
-                                    สแกนหน้าเครื่องเพื่อเช็คอิน
+                            <div class="pt-6 border-t-2 border-dashed border-slate-100">
+                                <button onclick="setView('scanner')" class="w-full py-4 bg-slate-900 text-white font-bold rounded-2xl flex items-center justify-center gap-2 shadow-lg hover:bg-black transition-all active:scale-95">
+                                    <i data-lucide="qr-code" size="20"></i> เปิดสแกนเช็คอิน
                                 </button>
-                                <button onclick="setView('selection'); window.state.activeBookings=[]; render();" class="w-full mt-8 text-[11px] font-black text-slate-400 uppercase tracking-[0.3em] hover:text-indigo-600 transition-colors">ย้อนกลับไปหน้าหลัก</button>
+                                <button onclick="setView('selection'); window.state.activeBookings=[]; render();" class="w-full mt-5 text-[10px] font-bold text-slate-400 uppercase tracking-widest text-center">กลับสู่หน้าหลัก</button>
                             </div>
                         </div>
                     </div>
@@ -604,153 +604,139 @@
             `;
         }
 
-        function renderScanner() {
+        function renderScannerUI() {
             return `
-                <div class="fixed inset-0 bg-slate-900 z-[100] flex flex-col items-center justify-center p-6 text-white overflow-hidden animate-in fade-in duration-500">
-                    <div class="w-full max-w-md text-center">
-                        <div class="mb-12">
-                            <h2 class="text-4xl font-black mb-2 tracking-tight">ยืนยันการใช้งาน</h2>
-                            <p class="text-slate-400 text-sm font-medium">นำกล้องไปสแกน QR Code ที่หน้าอุปกรณ์ของคุณ</p>
+                <div class="fixed inset-0 bg-slate-900 z-[100] flex flex-col items-center justify-center p-6 text-white animate-in fade-in duration-500">
+                    <div class="w-full max-w-sm text-center">
+                        <div class="mb-10">
+                            <h2 class="text-2xl font-bold mb-1 tracking-tight leading-none">เช็คอินเข้าใช้งาน</h2>
+                            <p class="text-slate-400 text-xs font-medium uppercase tracking-widest opacity-70">Scan Surface QR Code</p>
                         </div>
                         
-                        <div class="relative w-full aspect-square bg-black rounded-[3.5rem] overflow-hidden border-[10px] border-white/5 shadow-2xl">
+                        <div class="relative w-full aspect-square bg-black rounded-3xl overflow-hidden border-8 border-white/5 shadow-2xl">
                             <div id="reader" class="w-full h-full"></div>
-                            <div class="absolute inset-0 pointer-events-none border-[5rem] border-slate-900/60 z-10"></div>
-                            <div class="absolute top-1/2 left-0 right-0 h-1 bg-indigo-500 shadow-[0_0_35px_rgba(99,102,241,1)] animate-scan-line z-20"></div>
+                            <div class="absolute inset-0 pointer-events-none border-[3rem] border-slate-900/60 z-10 shadow-inner"></div>
+                            <div class="absolute top-1/2 left-0 right-0 h-1 bg-indigo-500 shadow-[0_0_20px_#6366f1] animate-scan-line z-20"></div>
                         </div>
 
-                        <div class="mt-14 space-y-8">
-                            <div class="bg-indigo-600/20 border-2 border-indigo-500/20 p-6 rounded-[2rem] backdrop-blur-xl animate-pulse">
-                                <p class="text-[10px] font-black uppercase tracking-[0.4em] text-indigo-400 mb-2">Target Verification</p>
-                                <p class="font-black text-2xl">${window.state.activeBookings[0]?.resourceName}</p>
+                        <div class="mt-12 space-y-4">
+                            <div class="bg-white/5 border border-white/10 p-4 rounded-2xl">
+                                <p class="text-[8px] font-bold uppercase tracking-widest text-indigo-400 mb-1 leading-none">Target Unit</p>
+                                <p class="font-bold text-base leading-none">${window.state.activeBookings[0]?.resourceName}</p>
                             </div>
-                            <button onclick="setView('pass')" class="w-full py-5 bg-white/5 text-white font-black rounded-[2rem] backdrop-blur-md border border-white/10 active:scale-95 transition-all uppercase tracking-widest text-xs border-b-4 border-white/10">ยกเลิกการสแกน</button>
+                            <button onclick="setView('pass')" class="w-full py-3.5 bg-white/5 text-white font-bold rounded-2xl border border-white/10 text-[10px] uppercase tracking-widest">ยกเลิก</button>
                         </div>
                     </div>
                 </div>
             `;
         }
 
-        function renderAdminView() {
+        function renderAdminUI() {
             return `
-                <div class="space-y-10 animate-in fade-in slide-in-from-bottom-8 duration-700">
-                    <!-- Project Configuration -->
-                    <section class="bg-white p-12 rounded-[3.5rem] border border-slate-100 shadow-2xl space-y-10">
-                        <div class="flex items-center gap-4"><i data-lucide="layers" class="text-indigo-600" size="40"></i><h2 class="text-3xl font-black tracking-tight">ตั้งค่าโปรเจกต์</h2></div>
-                        <form onsubmit="saveProjectSettings(event)" class="grid grid-cols-1 md:grid-cols-2 gap-10">
+                <div class="space-y-8 animate-in fade-in duration-700 pb-20">
+                    <section class="bg-white p-8 rounded-3xl border border-slate-100 shadow-xl space-y-8 border-t-8 border-indigo-600">
+                        <div class="flex items-center gap-3 text-indigo-600"><i data-lucide="settings-2" size="24"></i><h2 class="text-lg font-bold">Project Configuration</h2></div>
+                        <form onsubmit="saveAdminConfig(event)" class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            <div class="md:col-span-2 space-y-2">
+                                <label class="text-[10px] font-bold uppercase text-slate-400 ml-2 tracking-widest leading-none">Project Name</label>
+                                <input name="projectName" type="text" value="${window.state.settings.projectName}" class="w-full p-4 rounded-xl bg-slate-50 border border-slate-100 font-bold outline-none text-base shadow-inner" required>
+                            </div>
+                            <div class="space-y-2"><label class="text-[10px] font-bold uppercase text-slate-400 ml-2">เริ่มวันที่</label><input name="startDate" type="date" value="${window.state.settings.startDate}" class="w-full p-4 rounded-xl bg-slate-50 border border-slate-100 font-bold shadow-inner"></div>
+                            <div class="space-y-2"><label class="text-[10px] font-bold uppercase text-slate-400 ml-2">สิ้นสุดวันที่</label><input name="endDate" type="date" value="${window.state.settings.endDate}" class="w-full p-4 rounded-xl bg-slate-50 border border-slate-100 font-bold shadow-inner"></div>
+                            <div class="space-y-2"><label class="text-[10px] font-bold uppercase text-slate-400 ml-2">เวลาเปิด</label><input name="startTime" type="time" value="${window.state.settings.startTime}" class="w-full p-4 rounded-xl bg-slate-50 border border-slate-100 font-bold shadow-inner"></div>
+                            <div class="space-y-2"><label class="text-[10px] font-bold uppercase text-slate-400 ml-2">เวลาปิด</label><input name="endTime" type="time" value="${window.state.settings.endTime}" class="w-full p-4 rounded-xl bg-slate-50 border border-slate-100 font-bold shadow-inner"></div>
+                            
                             <div class="md:col-span-2 space-y-3">
-                                <label class="text-[11px] font-black uppercase text-slate-400 ml-4 block tracking-[0.2em]">Project Title</label>
-                                <input name="projectName" type="text" value="${window.state.settings.projectName}" class="w-full p-6 rounded-2xl bg-slate-50 border-2 border-slate-100 font-bold outline-none focus:border-indigo-500 text-xl" required>
-                            </div>
-                            <div class="space-y-3">
-                                <label class="text-[11px] font-black uppercase text-slate-400 ml-4 block tracking-[0.2em]">Project Duration (Start)</label>
-                                <input name="startDate" type="date" value="${window.state.settings.startDate}" class="w-full p-6 rounded-2xl bg-slate-50 border-2 border-slate-100 font-bold text-lg">
-                            </div>
-                            <div class="space-y-3">
-                                <label class="text-[11px] font-black uppercase text-slate-400 ml-4 block tracking-[0.2em]">Project Duration (End)</label>
-                                <input name="endDate" type="date" value="${window.state.settings.endDate}" class="w-full p-6 rounded-2xl bg-slate-50 border-2 border-slate-100 font-bold text-lg">
-                            </div>
-                            <div class="space-y-3">
-                                <label class="text-[11px] font-black uppercase text-slate-400 ml-4 block tracking-[0.2em]">Service Start</label>
-                                <input name="startTime" type="time" value="${window.state.settings.startTime}" class="w-full p-6 rounded-2xl bg-slate-50 border-2 border-slate-100 font-bold text-lg">
-                            </div>
-                            <div class="space-y-3">
-                                <label class="text-[11px] font-black uppercase text-slate-400 ml-4 block tracking-[0.2em]">Service End</label>
-                                <input name="endTime" type="time" value="${window.state.settings.endTime}" class="w-full p-6 rounded-2xl bg-slate-50 border-2 border-slate-100 font-bold text-lg">
-                            </div>
-                            <div class="md:col-span-2 space-y-5">
-                                <label class="text-[11px] font-black uppercase text-slate-400 ml-4 block tracking-[0.2em]">Operating Days</label>
-                                <div class="flex flex-wrap gap-3">
+                                <label class="text-[10px] font-bold uppercase text-slate-400 ml-2">Operating Days</label>
+                                <div class="flex flex-wrap gap-2">
                                     ${DAYS_TH.map((d, i) => `
-                                        <label class="flex items-center gap-3 bg-slate-50 px-6 py-5 rounded-[1.5rem] border-2 border-slate-100 text-sm font-black uppercase cursor-pointer hover:bg-indigo-50 transition-all select-none">
-                                            <input type="checkbox" name="day-${i}" ${window.state.settings.availableDays.includes(i) ? 'checked' : ''} class="w-6 h-6 rounded text-indigo-600 border-2"> ${d}
+                                        <label class="flex items-center gap-2 bg-slate-50 px-4 py-3 rounded-xl border border-slate-100 text-[9px] font-bold uppercase cursor-pointer hover:bg-indigo-50 transition-all group">
+                                            <input type="checkbox" name="day-${i}" ${window.state.settings.availableDays.includes(i) ? 'checked' : ''} class="w-4 h-4 rounded text-indigo-600 transition-all"> <span class="group-hover:text-indigo-600">${d}</span>
                                         </label>
                                     `).join('')}
                                 </div>
                             </div>
-                            <div class="md:col-span-2 space-y-3">
-                                <label class="text-[11px] font-black uppercase text-slate-400 ml-4 block tracking-[0.2em]">Total Project Quota (Hr/Student)</label>
-                                <input name="maxHours" type="number" value="${window.state.settings.maxHoursPerPerson}" class="w-full p-7 rounded-[2rem] bg-indigo-50 border-4 border-indigo-100 font-black text-4xl text-indigo-600 text-center">
+                            
+                            <div class="space-y-2">
+                                <label class="text-[10px] font-bold uppercase text-slate-400 ml-2">โควตารายวัน (ชม./คน)</label>
+                                <input name="maxHoursDay" type="number" value="${window.state.settings.maxHoursPerDay}" class="w-full p-4 rounded-xl bg-indigo-50 border border-indigo-100 font-bold text-xl text-indigo-600 shadow-inner">
                             </div>
-                            <div class="md:col-span-2 pt-6">
-                                <button type="submit" class="w-full py-6 bg-indigo-600 text-white font-black rounded-[2.5rem] shadow-2xl shadow-indigo-200 hover:bg-indigo-700 transition-all text-2xl border-b-8 border-indigo-800 active:translate-y-1">อัปเดตการตั้งค่าระบบ</button>
+                            <div class="space-y-2">
+                                <label class="text-[10px] font-bold uppercase text-slate-400 ml-2">โควตารวม (ชม./คน)</label>
+                                <input name="maxHoursTotal" type="number" value="${window.state.settings.maxTotalHours}" class="w-full p-4 rounded-xl bg-indigo-50 border border-indigo-100 font-bold text-xl text-indigo-600 shadow-inner">
+                            </div>
+                            
+                            <div class="md:col-span-2 pt-4">
+                                <button type="submit" class="w-full py-4 bg-indigo-600 text-white font-bold rounded-2xl shadow-lg hover:bg-indigo-700 active:scale-[0.98] border-b-4 border-indigo-800 uppercase tracking-widest text-sm">Save Global Project Settings</button>
                             </div>
                         </form>
                     </section>
 
-                    <!-- Resources -->
-                    <section class="bg-white p-12 rounded-[3.5rem] border border-slate-100 shadow-2xl space-y-10">
-                        <div class="flex items-center gap-4"><i data-lucide="monitor-speaker" class="text-indigo-600" size="40"></i><h2 class="text-3xl font-black tracking-tight">คลังอุปกรณ์</h2></div>
-                        <form onsubmit="addResource(event)" class="flex gap-5">
-                            <input name="resName" placeholder="เพิ่มอุปกรณ์ใหม่ (เช่น Laser Cutter A)..." class="flex-1 p-6 rounded-[2rem] bg-slate-50 border-2 border-slate-100 font-bold outline-none focus:border-indigo-500 text-lg shadow-inner" required>
-                            <button type="submit" class="px-12 bg-slate-900 text-white font-black rounded-[2rem] hover:bg-black transition-all shadow-lg active:scale-95 uppercase tracking-widest text-xs">Add New</button>
+                    <section class="bg-white p-8 rounded-3xl border border-slate-100 shadow-xl space-y-6">
+                        <div class="flex items-center gap-3 text-indigo-600"><i data-lucide="package-plus" size="24"></i><h2 class="text-lg font-bold">Resource Inventory</h2></div>
+                        <form onsubmit="addNewResource(event)" class="flex gap-3">
+                            <input name="resName" placeholder="เพิ่มรายการใหม่..." class="flex-1 p-4 rounded-xl bg-slate-50 border border-slate-100 font-bold outline-none focus:ring-1 focus:ring-indigo-300 shadow-inner" required>
+                            <button type="submit" class="px-8 bg-slate-900 text-white font-bold rounded-xl hover:bg-black transition-all active:scale-95 text-[10px] uppercase tracking-widest">Enroll</button>
                         </form>
-                        <div class="grid grid-cols-1 gap-5">
+                        <div class="grid grid-cols-1 gap-3">
                             ${window.state.resources.map(res => `
-                                <div class="flex justify-between items-center p-8 bg-slate-50 rounded-[2.5rem] border-2 border-slate-100 group transition-all hover:border-indigo-200 hover:shadow-xl">
-                                    <div class="flex items-center gap-6">
-                                        <div class="w-16 h-16 bg-white rounded-3xl flex items-center justify-center text-slate-400 group-hover:text-indigo-600 transition-colors shadow-sm border border-slate-50"><i data-lucide="cpu" size="32"></i></div>
-                                        <div><p class="font-black text-slate-800 text-2xl leading-none tracking-tight">${res.name}</p><p class="text-[10px] text-slate-400 font-black uppercase mt-3 tracking-[0.3em]">Device ID: ${res.id}</p></div>
+                                <div class="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 group hover:border-indigo-200">
+                                    <div class="flex items-center gap-4">
+                                        <div class="w-10 h-10 bg-white rounded-xl flex items-center justify-center text-slate-300 border border-slate-50"><i data-lucide="box" size="20"></i></div>
+                                        <div><p class="font-bold text-slate-800 text-sm leading-tight">${res.name}</p><p class="text-[8px] text-slate-400 font-bold uppercase mt-1 tracking-widest">UID: ${res.id}</p></div>
                                     </div>
-                                    <div class="flex gap-4">
-                                        <button onclick="openQRModal('${res.id}', '${res.name}')" class="p-5 bg-white text-indigo-600 rounded-[1.5rem] shadow-md border border-slate-100 hover:bg-indigo-600 hover:text-white transition-all active:scale-90"><i data-lucide="qr-code" size="28"></i></button>
-                                        <button onclick="deleteDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'resources', '${res.id}'))" class="p-5 bg-white text-red-400 rounded-[1.5rem] shadow-md border border-slate-100 hover:bg-red-50 transition-all active:scale-90"><i data-lucide="trash-2" size="28"></i></button>
+                                    <div class="flex gap-2">
+                                        <button onclick="openQRModal('${res.id}', '${res.name}')" class="p-2.5 bg-white text-indigo-600 rounded-xl shadow-sm border border-slate-100 hover:bg-indigo-600 hover:text-white transition-all active:scale-90 shadow-sm"><i data-lucide="qr-code" size="18"></i></button>
+                                        <button onclick="deleteDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'resources', '${res.id}'))" class="p-2.5 bg-white text-red-400 rounded-xl shadow-sm border border-slate-100 hover:bg-red-50 active:scale-90 shadow-sm"><i data-lucide="trash-2" size="18"></i></button>
                                     </div>
                                 </div>
                             `).join('')}
                         </div>
                     </section>
 
-                    <!-- History / Logs -->
-                    <section class="bg-white p-12 rounded-[3.5rem] border border-slate-100 shadow-2xl space-y-10 overflow-hidden">
-                        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-6">
-                            <div class="flex items-center gap-4"><i data-lucide="clipboard-list" class="text-indigo-600" size="40"></i><h2 class="text-3xl font-black tracking-tight">ประวัติการจองทั้งหมด</h2></div>
-                            <div class="flex gap-4 w-full sm:w-auto">
-                                <button onclick="clearHistoryByDay()" class="flex-1 sm:flex-none px-6 py-4 bg-slate-100 text-slate-600 text-[10px] font-black uppercase rounded-2xl hover:bg-slate-200 transition-colors tracking-[0.2em] border border-slate-100">ลบตามวัน</button>
-                                <button onclick="clearHistoryTotal()" class="flex-1 sm:flex-none px-6 py-4 bg-red-50 text-red-500 text-[10px] font-black uppercase rounded-2xl hover:bg-red-100 transition-colors tracking-[0.2em] border border-red-100">ล้างทั้งหมด</button>
+                    <section class="bg-white p-8 rounded-3xl border border-slate-100 shadow-xl space-y-6 overflow-hidden">
+                        <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                            <div class="flex items-center gap-3 text-indigo-600 leading-none"><i data-lucide="history" size="24"></i><h2 class="text-lg font-bold">Booking Activity Log</h2></div>
+                            <div class="flex gap-2 w-full sm:w-auto">
+                                <button onclick="clearHistoryByDay()" class="flex-1 sm:flex-none px-4 py-2 bg-slate-100 text-slate-600 text-[9px] font-bold uppercase rounded-xl hover:bg-slate-200 tracking-widest">ลบตามวัน</button>
+                                <button onclick="wipeAllHistory()" class="flex-1 sm:flex-none px-4 py-2 bg-red-50 text-red-500 text-[9px] font-bold uppercase rounded-xl border border-red-100 shadow-sm tracking-widest">ล้างทั้งหมด</button>
                             </div>
                         </div>
-                        <div class="overflow-x-auto -mx-12 px-12 custom-scrollbar">
+                        <div class="overflow-x-auto custom-scrollbar">
                             <table class="w-full text-left">
-                                <thead class="border-b-4 border-slate-50 text-[12px] font-black uppercase text-slate-400 tracking-[0.3em]">
+                                <thead class="border-b-2 border-slate-50 text-[9px] font-bold uppercase text-slate-400 tracking-widest">
                                     <tr>
-                                        <th class="py-8">วันและเวลา</th>
-                                        <th class="py-8">นักศึกษา / อุปกรณ์</th>
-                                        <th class="py-8 text-center">การเช็คอิน</th>
-                                        <th class="py-8 text-right"></th>
+                                        <th class="py-4">TIMESTAMP</th>
+                                        <th class="py-4">ENTITY</th>
+                                        <th class="py-4 text-center">IDENTITY</th>
+                                        <th class="py-4"></th>
                                     </tr>
                                 </thead>
-                                <tbody class="divide-y-2 divide-slate-50">
+                                <tbody class="divide-y divide-slate-50">
                                     ${window.state.bookings.slice().sort((a,b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0)).map(b => `
                                         <tr class="group hover:bg-slate-50/50 transition-colors">
-                                            <td class="py-8">
-                                                <p class="font-black text-slate-800 text-lg tracking-tight">${b.date}</p>
-                                                <p class="text-[11px] text-indigo-600 font-black mt-1.5 uppercase">${b.slot} - ${b.slot.split(':')[0]}:59</p>
+                                            <td class="py-4 leading-tight">
+                                                <p class="font-bold text-slate-800 text-[13px] tracking-tight">${b.date}</p>
+                                                <p class="text-[9px] text-indigo-500 font-bold mt-0.5 uppercase">${b.slot} - ${b.slot.split(':')[0]}:59</p>
                                             </td>
-                                            <td class="py-8">
-                                                <div class="flex flex-col">
-                                                    <p class="text-slate-800 font-black text-lg">${b.studentId}</p>
-                                                    <p class="text-[10px] text-slate-400 font-bold uppercase mt-1 tracking-widest">${b.resourceName}</p>
-                                                </div>
+                                            <td class="py-4 leading-tight">
+                                                <p class="text-slate-800 font-bold text-[13px] leading-tight">${b.studentId}</p>
+                                                <p class="text-[8px] text-slate-400 font-bold uppercase mt-0.5 tracking-widest truncate max-w-[100px]">${b.resourceName}</p>
                                             </td>
-                                            <td class="py-8 text-center">
+                                            <td class="py-4 text-center">
                                                 ${b.status === 'checked_in' ? `
-                                                    <div class="inline-flex flex-col items-center">
-                                                        <span class="px-4 py-1.5 bg-green-100 text-green-600 text-[10px] font-black rounded-full uppercase tracking-widest border border-green-200">Arrived</span>
-                                                        <span class="text-[9px] text-slate-400 mt-2 font-bold">${new Date(b.checkInAt).toLocaleTimeString()}</span>
-                                                    </div>
+                                                    <span class="px-2 py-0.5 bg-green-100 text-green-600 text-[7px] font-bold rounded-full uppercase border border-green-200">Arrived</span>
                                                 ` : `
-                                                    <span class="px-4 py-1.5 bg-slate-100 text-slate-400 text-[10px] font-black rounded-full uppercase tracking-widest border border-slate-200 opacity-60">Pending</span>
+                                                    <span class="px-2 py-0.5 bg-slate-100 text-slate-400 text-[7px] font-bold rounded-full uppercase border border-slate-200 opacity-50">Wait</span>
                                                 `}
                                             </td>
-                                            <td class="py-8 text-right">
-                                                <button onclick="deleteBookingItem('${b.id}')" class="p-4 text-slate-300 hover:text-red-500 transition-all opacity-0 group-hover:opacity-100 active:scale-75"><i data-lucide="trash-2" size="24"></i></button>
+                                            <td class="py-4 text-right">
+                                                <button onclick="deleteBookingEntry('${b.id}')" class="p-1.5 text-slate-300 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all active:scale-75"><i data-lucide="trash-2" size="16"></i></button>
                                             </td>
                                         </tr>
                                     `).join('')}
                                 </tbody>
                             </table>
-                            ${window.state.bookings.length === 0 ? '<div class="py-32 text-center grayscale opacity-30"><i data-lucide="database-zap" size="64" class="mx-auto mb-6"></i><p class="text-slate-500 font-black uppercase tracking-[0.4em] text-sm">No Database Records</p></div>' : ''}
                         </div>
                     </section>
                 </div>
@@ -758,19 +744,17 @@
         }
 
         function renderQRModal() {
-            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=300x300&data=${window.state.showQRModal.id}`;
+            const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${window.state.showQRModal.id}`;
             return `
                 <div class="fixed inset-0 bg-slate-900/90 backdrop-blur-md z-[200] flex items-center justify-center p-6 no-print">
-                    <div class="bg-white rounded-[5rem] p-16 max-w-sm w-full text-center relative shadow-2xl animate-in zoom-in duration-300 border-t-[12px] border-indigo-600 shadow-indigo-500/20">
-                        <button onclick="closeQRModal()" class="absolute top-10 right-10 p-4 text-slate-300 hover:text-slate-800 transition-all hover:rotate-90 active:scale-75"><i data-lucide="x" size="36"></i></button>
-                        <h3 class="text-4xl font-black mb-2 text-slate-800 tracking-tight">${window.state.showQRModal.name}</h3>
-                        <p class="text-[10px] font-black text-slate-400 uppercase tracking-[0.5em] mb-12">Hardware Access Key</p>
-                        <div class="bg-slate-50 p-10 rounded-[4rem] mb-12 flex items-center justify-center border-4 border-slate-50 shadow-inner relative group">
-                            <div class="absolute inset-0 bg-indigo-600/5 opacity-0 group-hover:opacity-100 transition-opacity rounded-[4rem]"></div>
-                            <img src="${qrUrl}" alt="QR" class="w-[220px] h-[220px] rounded-3xl shadow-2xl relative z-10">
+                    <div class="bg-white rounded-[3.5rem] p-10 max-w-sm w-full text-center relative shadow-2xl animate-in zoom-in duration-300 border-t-8 border-indigo-600">
+                        <button onclick="closeQRModal()" class="absolute top-6 right-6 p-2 text-slate-300 hover:text-slate-800 transition-all active:scale-75"><i data-lucide="x" size="28"></i></button>
+                        <h3 class="text-2xl font-bold mb-1 text-slate-800 tracking-tight uppercase leading-none">${window.state.showQRModal.name}</h3>
+                        <p class="text-[8px] font-bold text-slate-400 uppercase tracking-[0.4em] mb-10 leading-none">Security Hardware Key</p>
+                        <div class="bg-slate-50 p-8 rounded-3xl mb-10 flex items-center justify-center border-4 border-slate-50 shadow-inner">
+                            <img src="${qrUrl}" alt="QR" class="w-[180px] h-[180px] rounded-2xl shadow-xl">
                         </div>
-                        <p class="text-[11px] font-black text-slate-400 uppercase mb-10 leading-relaxed tracking-wider">Print this identification key <br/>and attach to the physical hardware.</p>
-                        <button onclick="window.print()" class="w-full py-7 bg-indigo-600 text-white font-black rounded-[2.5rem] shadow-2xl hover:bg-indigo-700 transition-all flex items-center justify-center gap-4 text-xl border-b-4 border-indigo-800 active:translate-y-1"><i data-lucide="printer" size="28"></i> พิมพ์รหัสเครื่อง</button>
+                        <button onclick="window.print()" class="w-full py-5 bg-indigo-600 text-white font-bold rounded-2xl shadow-lg hover:bg-indigo-700 transition-all flex items-center justify-center gap-3 active:translate-y-1"><i data-lucide="printer" size="20"></i> พิมพ์รหัส QR</button>
                     </div>
                 </div>
             `;
@@ -778,18 +762,18 @@
 
         function renderFooter() {
             return `
-                <footer class="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-xl border-t border-slate-100 py-10 px-10 z-40 shadow-[0_-20px_60px_rgba(0,0,0,0.06)]">
-                    <div class="max-w-3xl mx-auto flex justify-between items-center text-[11px] font-black text-slate-400 uppercase tracking-[0.3em]">
-                        <div class="flex items-center gap-4 border-r pr-10 border-slate-100">
-                            <div class="w-10 h-10 rounded-2xl bg-indigo-50 flex items-center justify-center text-indigo-400 shadow-inner"><i data-lucide="fingerprint" size="18"></i></div>
+                <footer class="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-md border-t border-slate-100 py-8 px-8 z-40 shadow-[0_-15px_40px_rgba(0,0,0,0.04)]">
+                    <div class="max-w-2xl mx-auto flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none">
+                        <div class="flex items-center gap-3 border-r pr-6 border-slate-100">
+                            <div class="w-9 h-9 rounded-xl bg-indigo-50 flex items-center justify-center text-indigo-400 shadow-inner leading-none"><i data-lucide="fingerprint" size="16"></i></div>
                             <div>
-                                <p class="text-[8px] opacity-60 leading-none mb-1">Session Identified</p>
-                                <p class="text-slate-800">${window.state.studentId || 'ESTABLISHING...'}</p>
+                                <p class="text-[6px] opacity-60 leading-none mb-1">Session ID</p>
+                                <p class="text-slate-800 leading-none">${window.state.studentId || 'AUTHENTICATING'}</p>
                             </div>
                         </div>
-                        <div class="flex items-center gap-4 text-green-500 bg-green-50/50 px-6 py-3 rounded-2xl border border-green-100">
-                            <div class="w-2.5 h-2.5 rounded-full bg-green-500 animate-pulse shadow-[0_0_12px_#4ade80]"></div> 
-                            <span>Node Synced</span>
+                        <div class="flex items-center gap-3 text-green-500 bg-green-50/50 px-4 py-2.5 rounded-xl border border-green-100 leading-none">
+                            <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse shadow-[0_0_10px_#4ade80]"></div> 
+                            <span>Node Live Sync</span>
                         </div>
                     </div>
                 </footer>
@@ -798,13 +782,10 @@
 
         function renderError() {
             return `
-                <div class="mb-12 p-8 bg-red-50 border-2 border-red-100 text-red-600 rounded-[2.5rem] text-[12px] font-black flex items-center gap-6 animate-in slide-in-from-top-10 shadow-xl shadow-red-100/50">
-                    <div class="w-12 h-12 bg-red-100 rounded-3xl flex items-center justify-center shrink-0 shadow-inner"><i data-lucide="alert-triangle" size="24"></i></div>
-                    <div class="flex-1">
-                        <p class="uppercase tracking-widest mb-1">Security / System Alert</p>
-                        <p class="text-slate-500 font-bold opacity-80 leading-relaxed">${String(window.state.error)}</p>
-                    </div>
-                    <button onclick="window.state.error=null; render();" class="text-red-300 hover:text-red-600 p-3 transition-colors active:scale-75"><i data-lucide="x-circle" size="32"></i></button>
+                <div class="mb-8 p-4 bg-red-50 border border-red-100 text-red-600 rounded-2xl text-[10px] font-bold flex items-center gap-4 animate-in slide-in-from-top-4 shadow-sm">
+                    <div class="w-8 h-8 bg-red-100 rounded-xl flex items-center justify-center shrink-0 shadow-inner border border-red-200 leading-none"><i data-lucide="alert-octagon" size="18"></i></div>
+                    <p class="flex-1 uppercase tracking-widest leading-relaxed">${String(window.state.error)}</p>
+                    <button onclick="window.state.error=null; render();" class="text-red-300 hover:text-red-600 p-1 active:scale-75 transition-transform"><i data-lucide="x-circle" size="22"></i></button>
                 </div>
             `;
         }
