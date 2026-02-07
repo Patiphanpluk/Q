@@ -725,7 +725,7 @@
 
         function renderLogin() {
             return `
-                <div class="min-h-screen flex flex-col items-center justify-center p-6 bg-slate-50">
+                <div class="h-[100dvh] w-full flex flex-col items-center justify-center p-6 bg-slate-50 relative overflow-hidden">
                     <div class="max-w-sm w-full bg-white rounded-[2.5rem] p-10 shadow-2xl border border-white text-center page-transition">
                         <div class="w-20 h-20 bg-indigo-600 rounded-3xl flex items-center justify-center text-white mx-auto mb-8 shadow-xl"><i data-lucide="shield-check" size="40"></i></div>
                         <h1 class="text-3xl font-black text-slate-800 mb-2">SmartBooking</h1>
@@ -1056,6 +1056,25 @@
                             <span>Connected</span>
                         </div>
                     </div>
+
+                    <!-- NEW: Project Details Info Box -->
+                    <div class="bg-white p-6 rounded-[2rem] border border-slate-100 shadow-sm space-y-3">
+                        <div class="flex items-center justify-between">
+                            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">ระยะเวลาโครงการ</span>
+                            <span class="text-xs font-bold text-slate-800">${formatDateTH(window.state.settings.startDate)} - ${formatDateTH(window.state.settings.endDate)}</span>
+                        </div>
+                        <div class="flex items-center justify-between">
+                            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">เวลาทำการ</span>
+                            <span class="text-xs font-bold text-slate-800">${window.state.settings.startTime} - ${window.state.settings.endTime} น.</span>
+                        </div>
+                         <div class="flex items-center justify-between">
+                            <span class="text-[10px] font-bold text-slate-400 uppercase tracking-widest">วันให้บริการ</span>
+                            <div class="flex gap-1">
+                                ${window.state.settings.availableDays.map(d => `<span class="w-5 h-5 rounded-full bg-indigo-50 text-indigo-600 flex items-center justify-center text-[8px] font-bold">${DAYS_TH[d].charAt(0)}</span>`).join('')}
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="grid grid-cols-1 gap-4">
                         <div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest px-2 leading-none">เลือกทรัพยากรเพื่อดำเนินการจอง</div>
                         ${window.state.resources.map(res => `
