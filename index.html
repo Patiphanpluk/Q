@@ -794,6 +794,47 @@
             }
         };
 
+        // --- NEW HELPER: Render Active User Card ---
+        function renderActiveUserCard(resourceId) {
+            const res = window.state.resources.find(r => r.id === resourceId);
+            if (!res || res.status !== 'in_use' || !res.currentStudent) return '';
+
+            const todayStr = getLocalDateString();
+            const activeBookings = window.state.bookings.filter(b => 
+                b.resourceId === res.id && 
+                b.studentId === res.currentStudent && 
+                b.date === todayStr &&
+                b.status === 'checked_in'
+            );
+            
+            if (activeBookings.length === 0) return '';
+
+            const timeRange = window.formatBookingRanges(activeBookings);
+            
+            return `
+                <div class="mb-6 p-5 bg-indigo-600 rounded-[2rem] text-white shadow-xl relative overflow-hidden animate-in fade-in slide-in-from-top-4 duration-500">
+                    <div class="absolute -right-10 -top-10 w-40 h-40 bg-white/10 rounded-full blur-3xl pointer-events-none"></div>
+                    <div class="relative z-10 flex items-center gap-4">
+                        <div class="w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center shadow-inner relative shrink-0">
+                            <div class="absolute inset-0 bg-white/10 rounded-xl animate-ping opacity-20"></div>
+                            <i data-lucide="user-check" size="24"></i>
+                        </div>
+                        <div class="min-w-0">
+                            <div class="flex items-center gap-2 mb-1">
+                                <div class="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></div>
+                                <p class="text-[9px] font-bold uppercase tracking-widest opacity-80">กำลังใช้งาน (In Use)</p>
+                            </div>
+                            <h3 class="text-xl font-black leading-none tracking-tight truncate">${res.currentStudent}</h3>
+                            <div class="mt-1 inline-flex items-center gap-1.5">
+                                <i data-lucide="clock" size="12" class="text-indigo-200"></i>
+                                <span class="text-[10px] font-bold text-white tracking-wide opacity-90">${timeRange} น.</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }
+
         function render() {
             const app = document.getElementById('app');
             let mainContent = '';
@@ -964,47 +1005,9 @@
         function renderPublicView() {
             if (window.state.view === 'public_slots') return renderPublicSlots();
             
-            // Logic for Active User Display
-            const currentRes = window.state.resources.find(r => r.id === window.state.publicSelectedResourceId);
-            let activeUserCard = '';
-            
-            if (currentRes && currentRes.status === 'in_use' && currentRes.currentStudent) {
-                const todayStr = getLocalDateString();
-                // Find active bookings for this user on this resource today
-                const activeBookings = window.state.bookings.filter(b => 
-                    b.resourceId === currentRes.id && 
-                    b.studentId === currentRes.currentStudent && 
-                    b.date === todayStr &&
-                    b.status === 'checked_in'
-                );
-                
-                // If found, format time
-                if (activeBookings.length > 0) {
-                    const timeRange = window.formatBookingRanges(activeBookings);
-                    activeUserCard = `
-                        <div class="mb-6 p-6 bg-indigo-600 rounded-[2rem] text-white shadow-xl relative overflow-hidden animate-in fade-in slide-in-from-top-4 duration-500">
-                            <div class="absolute -right-10 -top-10 w-40 h-40 bg-white/10 rounded-full blur-3xl pointer-events-none"></div>
-                            <div class="relative z-10 flex items-center gap-5">
-                                <div class="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center shadow-inner relative">
-                                    <div class="absolute inset-0 bg-white/10 rounded-2xl animate-ping opacity-20"></div>
-                                    <i data-lucide="user-check" size="28"></i>
-                                </div>
-                                <div>
-                                    <div class="flex items-center gap-2 mb-1">
-                                        <div class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                                        <p class="text-[10px] font-bold uppercase tracking-widest opacity-80">กำลังใช้งาน (In Use)</p>
-                                    </div>
-                                    <h3 class="text-2xl font-black leading-none tracking-tight mb-2">${currentRes.currentStudent}</h3>
-                                    <div class="inline-flex items-center gap-2 bg-indigo-800/40 px-3 py-1.5 rounded-lg border border-white/10 backdrop-blur-md">
-                                        <i data-lucide="clock" size="14" class="text-indigo-200"></i>
-                                        <span class="text-xs font-bold text-white tracking-wide">${timeRange} น.</span>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                }
-            }
+            // Logic for Active User Display (Original - Keep for consistency or reuse helper if desired, but this one is slightly different visually in original, but we can reuse to simplify)
+            // Using the new helper for cleaner code
+            const activeUserCard = window.state.publicSelectedResourceId ? renderActiveUserCard(window.state.publicSelectedResourceId) : '';
 
             return `
                 <div class="flex-1 flex flex-col bg-slate-50 overflow-hidden page-transition">
@@ -1052,6 +1055,9 @@
             }
             const res = window.state.resources.find(r => r.id === window.state.publicSelectedResourceId);
             const resBookings = window.state.bookings.filter(b => b.date === dateStr && b.resourceId === res.id);
+            
+            // NEW: Add Active User Card here
+            const activeUserCard = renderActiveUserCard(window.state.publicSelectedResourceId);
 
             return `
                 <div class="flex-1 flex flex-col bg-slate-50 overflow-hidden page-transition text-left">
@@ -1062,6 +1068,9 @@
                     </header>
                     <div class="scrollable-content p-6 space-y-4">
                         <div class="max-w-md mx-auto space-y-3">
+                            <!-- Show Active User Card -->
+                            ${activeUserCard}
+                        
                             ${isPastDate ? `<div class="bg-red-50 p-4 rounded-2xl border border-red-100 text-red-500 font-bold text-[10px] uppercase text-center mb-4">วันและเวลาที่ผ่านมาแล้ว ไม่สามารถทำการจองใหม่ได้</div>` : ''}
                             ${slots.map(s => {
                                 const b = resBookings.find(x => x.slot === s.start);
@@ -1161,6 +1170,9 @@
                                 <i data-lucide="chevron-right" size="18"></i>
                             </button>
                         ` : ''}
+
+                        <!-- NEW: Active User Card in Booking Page -->
+                        ${renderActiveUserCard(window.state.selectedResource.id)}
 
                         <div class="flex justify-between items-center px-2 pt-2">
                             <p class="text-[10px] font-black text-slate-400 uppercase tracking-widest">สถานะวันที่ ${formatDateTH(window.state.selectedDate)}</p>
@@ -1423,8 +1435,13 @@
             `;
         }
 
-        // --- NEW: Add back renderReceiptUI function ---
+        // --- NEW: Add back renderReceiptUI function with SCAN RESTRICTION ---
         function renderReceiptUI() {
+            const booking = window.state.activeBookings[0];
+            const bookingDate = booking ? booking.date : '';
+            const todayStr = getLocalDateString();
+            const isToday = bookingDate === todayStr;
+
             return `
                 <div class="max-w-xs mx-auto animate-in zoom-in duration-300 page-transition">
                     <div class="bg-white rounded-[2.5rem] overflow-hidden shadow-2xl border border-slate-100 relative">
@@ -1437,9 +1454,14 @@
                             <div class="bg-slate-50 p-5 rounded-2xl border-2 border-dashed border-slate-200">
                                 <p class="text-[8px] font-bold text-slate-400 uppercase mb-2">Approved Time</p>
                                 <p class="text-indigo-600 font-black text-base">${window.formatBookingRanges(window.state.activeBookings)}</p>
+                                <p class="text-[10px] text-slate-400 font-bold mt-2 border-t border-slate-200 pt-2">วันที่: ${formatDateTH(bookingDate)}</p>
                             </div>
                             <div class="pt-4 flex flex-col gap-3">
-                                <button onclick="window.requestCameraPermission()" class="w-full py-4 bg-slate-900 text-white font-bold rounded-2xl shadow-xl active:scale-95 transition-all flex items-center justify-center gap-3"><i data-lucide="qr-code" size="20"></i> สแกนเช็คอิน</button>
+                                ${isToday ? `
+                                    <button onclick="window.requestCameraPermission()" class="w-full py-4 bg-slate-900 text-white font-bold rounded-2xl shadow-xl active:scale-95 transition-all flex items-center justify-center gap-3"><i data-lucide="qr-code" size="20"></i> สแกนเช็คอิน</button>
+                                ` : `
+                                    <button disabled class="w-full py-4 bg-slate-100 text-slate-400 font-bold rounded-2xl cursor-not-allowed flex items-center justify-center gap-3 opacity-80"><i data-lucide="calendar-off" size="20"></i> เช็คอินได้เฉพาะวันที่จอง</button>
+                                `}
                                 <button onclick="window.setView('selection'); window.state.selectedResource=null; window.render();" class="text-[10px] font-bold text-slate-400 uppercase tracking-widest py-2">กลับหน้าหลัก</button>
                             </div>
                         </div>
