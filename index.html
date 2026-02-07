@@ -453,6 +453,12 @@
                 if (totalBooked + window.state.selectedSlots.length >= window.state.settings.maxTotalHours) {
                     return window.uiAlert(`เกินโควตาทั้งหมด! (${window.state.settings.maxTotalHours} ชม.)`, "error");
                 }
+
+                // NEW: แจ้งเตือนเมื่อกดจองในวันปัจจุบัน (Warning for same-day booking)
+                if (window.state.selectedDate === todayStr && window.state.selectedSlots.length === 0) {
+                    window.uiAlert("ข้อควรระวัง: การจองรอบเวลาของ \"วันนี้\" เมื่อยืนยันแล้วจะไม่สามารถยกเลิกได้", "info");
+                }
+
                 window.state.selectedSlots.push(slotObj);
             }
             render();
