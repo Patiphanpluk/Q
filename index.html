@@ -215,6 +215,14 @@
             if (isNaN(d.getTime())) return "-"; 
             return d.toLocaleString('th-TH', { hour12: false });
         }
+        
+        // NEW: Specific time formatter
+        function formatTimeOnly(ts) {
+            if (!ts) return "-";
+            const d = ts.toDate ? ts.toDate() : new Date(ts); 
+            if (isNaN(d.getTime())) return "-"; 
+            return d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit', hour12: false });
+        }
 
         function getPossibleSlotsCount() {
             let current = new Date(`2000-01-01T${window.state.settings.startTime}`);
@@ -278,18 +286,21 @@
                 );
 
                 if (activeBookings.length > 0) {
-                    // Updated logic: Check if current time > SYSTEM END TIME (Set Time)
-                    // Allows users to stay active until the new closing time, even if booking slot ended earlier
                     if (currentHm > systemEndTime) {
                         console.log(`Auto-clearing resource ${res.name} because ${currentHm} > ${systemEndTime} (System Close)`);
+                        // Auto check-out behavior on system close
+                        for(let b of activeBookings) {
+                            await updateDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'bookings', b.id), { 
+                                status: 'completed',
+                                checkOutAt: new Date().toISOString()
+                            });
+                        }
                         await updateDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'resources', res.id), { 
                             status: 'idle', 
                             currentStudent: null, 
                             startedAt: null 
                         });
                     }
-                } else {
-                    // Fallback
                 }
             }
         };
@@ -303,7 +314,6 @@
                     if (u) listenToData();
                 });
                 
-                // Start Auto-Clear Interval (Runs every 10 seconds)
                 setInterval(checkAutoClear, 10000);
             } catch (err) { window.uiAlert("Firebase Error: " + err.message, "error"); }
         }
@@ -311,7 +321,7 @@
         function listenToData() {
             onSnapshot(doc(db, 'artifacts', fbId, 'public', 'data', 'settings', 'global_config'), (s) => {
                 if (s.exists()) window.state.settings = { ...window.state.settings, ...s.data() };
-                window.saveScrollPosition(); // Try to save scroll on data update
+                window.saveScrollPosition(); 
                 render();
             });
             onSnapshot(doc(db, 'artifacts', fbId, 'public', 'data', 'settings', 'allowed_students'), (s) => {
@@ -340,7 +350,6 @@
         // --- Functions ---
         const setView = (v) => { 
             window.state.view = v;
-            // When changing major views, we usually want to reset scroll, unless explicitly saved before
             if (!window.state.shouldRestoreScroll) {
                 window.state.lastScrollTop = 0;
             }
@@ -390,33 +399,24 @@
             window.state.selectedResource = { id, name }; 
             window.state.selectedSlots = [];
             window.state.view = 'calendar'; 
-            window.state.lastScrollTop = 0; // Reset scroll when entering new resource
+            window.state.lastScrollTop = 0;
             window.state.shouldRestoreScroll = false;
             render(); 
         };
 
         // GoToDate handles navigation from history
         const goToDate = (dateStr) => {
-             // Close modal first
              window.closeHistoryModal();
-
-             // Find a booking on this date for the current user to guess which resource they want to see
              const booking = window.state.bookings.find(b => b.date === dateStr && b.studentId === window.state.studentId);
              
              if (booking) {
-                 // Open that resource
                  window.state.selectedResource = { id: booking.resourceId, name: booking.resourceName };
                  window.state.selectedDate = dateStr;
                  window.state.view = 'calendar';
                  window.state.lastScrollTop = 0;
                  window.render();
-                 
-                 // Auto scroll to quota container after render
-                 setTimeout(() => {
-                     window.scrollToTarget();
-                 }, 300);
+                 setTimeout(() => { window.scrollToTarget(); }, 300);
              } else {
-                 // If no booking found, default to first resource
                  if (window.state.resources.length > 0) {
                      const r = window.state.resources[0];
                      window.state.selectedResource = { id: r.id, name: r.name };
@@ -429,15 +429,13 @@
         };
 
         const toggleSlotSelection = (slotObj) => {
-            window.saveScrollPosition(); // Save scroll before toggling
+            window.saveScrollPosition();
             
-            // Check closed dates
             if (window.state.settings.closedDates && window.state.settings.closedDates[window.state.selectedDate]) {
                 const reason = window.state.settings.closedDates[window.state.selectedDate];
                 return window.uiAlert(`ไม่สามารถจองได้: วันนี้ปิดให้บริการ (${reason})`, "error");
             }
 
-            // Fixed: Use getLocalDateString for accurate "Today" comparison
             const todayStr = getLocalDateString();
             if (window.state.selectedDate < todayStr) {
                 return window.uiAlert("วันเวลาที่ผ่านมาแล้ว ไม่สามารถจองย้อนหลังได้", "error");
@@ -447,11 +445,11 @@
             if (index > -1) {
                 window.state.selectedSlots.splice(index, 1);
             } else {
-                const dailyBooked = window.state.bookings.filter(b => b.studentId === window.state.studentId && b.date === window.state.selectedDate).length;
+                const dailyBooked = window.state.bookings.filter(b => b.studentId === window.state.studentId && b.date === window.state.selectedDate && b.status !== 'completed').length;
                 if (dailyBooked + window.state.selectedSlots.length >= window.state.settings.maxHoursPerDay) {
                     return window.uiAlert(`เกินโควตาต่อวัน! (${window.state.settings.maxHoursPerDay} ชม./วัน)`, "error");
                 }
-                const totalBooked = window.state.bookings.filter(b => b.studentId === window.state.studentId).length;
+                const totalBooked = window.state.bookings.filter(b => b.studentId === window.state.studentId && b.status !== 'completed').length;
                 if (totalBooked + window.state.selectedSlots.length >= window.state.settings.maxTotalHours) {
                     return window.uiAlert(`เกินโควตาทั้งหมด! (${window.state.settings.maxTotalHours} ชม.)`, "error");
                 }
@@ -461,7 +459,7 @@
         };
 
         const confirmBookingAction = async () => {
-            const todayStr = getLocalDateString(); // Fixed Date
+            const todayStr = getLocalDateString();
             if (window.state.selectedDate < todayStr) {
                 return window.uiAlert("วันเวลาที่ผ่านมาแล้ว ไม่สามารถจองย้อนหลังได้", "error");
             }
@@ -489,7 +487,7 @@
                 window.state.selectedSlots = [];
                 window.state.activeBookings = confirmedItems;
                 window.state.view = 'pass'; 
-                window.state.lastScrollTop = 0; // Reset scroll for pass view
+                window.state.lastScrollTop = 0; 
                 window.state.shouldRestoreScroll = false;
             } catch (err) { 
                 window.uiAlert("Booking failed: " + err.message, "error"); 
@@ -515,7 +513,7 @@
             setView('pass');
         };
 
-        const initScanner = () => {
+        const initScanner = (mode = 'checkin') => {
             if (window.state.isScanning) return;
             window.state.isScanning = true;
             window.html5QrScanner = new Html5Qrcode("reader");
@@ -523,8 +521,16 @@
                 if (window.state.isProcessingScan) return;
                 window.state.isProcessingScan = true;
                 const targetId = window.state.activeBookings[0]?.resourceId;
+                
                 if (text === targetId) {
-                    window.html5QrScanner.stop().then(() => { window.state.isScanning = false; processCheckIn(targetId); });
+                    window.html5QrScanner.stop().then(() => { 
+                        window.state.isScanning = false;
+                        if (mode === 'checkout') {
+                             processCheckOut(targetId);
+                        } else {
+                             processCheckIn(targetId);
+                        }
+                    });
                 } else { 
                     window.html5QrScanner.stop().then(() => {
                         window.state.isScanning = false;
@@ -537,11 +543,29 @@
         };
 
         const processCheckIn = async (resId) => {
-            for (const b of window.state.activeBookings) await updateDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'bookings', b.id), { status: 'checked_in', checkInAt: new Date().toISOString() });
+            // Check if user has other active check-ins? (Optional validation)
+            for (const b of window.state.activeBookings) {
+                await updateDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'bookings', b.id), { status: 'checked_in', checkInAt: new Date().toISOString() });
+            }
             await updateDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'resources', resId), { status: 'in_use', currentStudent: window.state.studentId, startedAt: new Date().toISOString() });
-            window.state.view = 'selection';
-            window.state.activeBookings = [];
-            window.uiAlert("เช็คอินสำเร็จ!");
+            window.state.view = 'pass'; // Stay on pass view to see status change
+            window.state.isProcessingScan = false;
+            window.uiAlert("เช็คอินสำเร็จ! เริ่มใช้งานได้");
+        };
+
+        // NEW: Check Out Function
+        const processCheckOut = async (resId) => {
+            for (const b of window.state.activeBookings) {
+                // If it was checked in, now mark completed
+                if (b.status === 'checked_in') {
+                    await updateDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'bookings', b.id), { status: 'completed', checkOutAt: new Date().toISOString() });
+                }
+            }
+            // Free the resource
+            await updateDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'resources', resId), { status: 'idle', currentStudent: null, startedAt: null });
+            window.state.view = 'pass';
+            window.state.isProcessingScan = false;
+            window.uiAlert("เช็คเอาท์เรียบร้อย! ขอบคุณที่ใช้บริการ");
         };
 
         const saveSettings = async (e) => {
@@ -550,8 +574,6 @@
 
             const f = new FormData(e.target);
             const days = DAYS_TH.map((_, i) => f.get(`day-${i}`) ? i : null).filter(x => x !== null);
-            
-            // Preserve existing closed dates
             const currentSettings = window.state.settings;
             
             await setDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'settings', 'global_config'), {
@@ -665,22 +687,17 @@
             const b = window.state.bookings.find(x => x.id === id);
             if (!b) return;
 
-            // Save scroll position BEFORE showing confirm dialog
             window.saveScrollPosition();
-
-            const todayStr = getLocalDateString(); // Fixed Date
+            const todayStr = getLocalDateString();
             const isPast = b.date < todayStr;
             const title = isPast ? "ลบประวัติ" : "ยกเลิกการจอง";
             const msg = isPast ? "ต้องการลบประวัติรายการนี้ใช่หรือไม่?" : "ต้องการยกเลิกการจองนี้ใช่หรือไม่?";
 
             window.uiConfirm(title, msg, async () => {
-                // Save again inside the callback just to be safe
                 window.saveScrollPosition();
                 await deleteDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'bookings', id));
                 
-                // NEW: If the deleted booking was actively checked-in, check if we need to reset the resource status
                 if (b.status === 'checked_in') {
-                    // Check if there are any OTHER checked-in bookings for this resource and student today
                     const otherActive = window.state.bookings.filter(ob => 
                         ob.id !== id && 
                         ob.resourceId === b.resourceId && 
@@ -690,7 +707,6 @@
                     );
                     
                     if (otherActive.length === 0) {
-                        // No other active bookings, reset the resource
                         await updateDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'resources', b.resourceId), { 
                             status: 'idle', 
                             currentStudent: null, 
@@ -738,14 +754,10 @@
                     await deleteDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'bookings', b.id));
                 }
                 
-                // NEW: Reset Resources if today is cleared
                 const todayStr = getLocalDateString();
                 if (d === todayStr) {
                      const inUseResources = window.state.resources.filter(r => r.status === 'in_use');
                      for (const r of inUseResources) {
-                         // Double check if any bookings remain (safety)
-                         // Since we just deleted by day, if they were active today, they are likely gone.
-                         // But to be safe, assume if we cleared today's data, we reset today's active status.
                          await updateDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'resources', r.id), { 
                             status: 'idle', 
                             currentStudent: null, 
@@ -761,7 +773,6 @@
         const clearAllHistory = () => window.uiConfirm("ล้างฐานข้อมูล", "ต้องการลบทั้งหมดหรือไม่?", async () => {
             for(const b of window.state.bookings) await deleteDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'bookings', b.id));
             
-            // NEW: Reset ALL resources status to idle
             for(const r of window.state.resources) {
                 if (r.status !== 'idle') {
                     await updateDoc(doc(db, 'artifacts', fbId, 'public', 'data', 'resources', r.id), { 
@@ -777,38 +788,36 @@
         const closeHistoryModal = () => { window.state.showHistoryModal = false; render(); };
 
         window.uiAlert = (message, type = 'info') => {
-            window.saveScrollPosition(); // Critical: Save scroll before showing modal
+            window.saveScrollPosition();
             window.state.modal = { show: true, title: type === 'error' ? 'ข้อผิดพลาด' : type === 'success' ? 'สำเร็จ' : 'แจ้งเตือน', message, type, onConfirm: null };
             render();
         };
         window.uiConfirm = (title, message, onConfirm) => {
-            window.saveScrollPosition(); // Critical: Save scroll before showing modal
+            window.saveScrollPosition();
             window.state.modal = { show: true, title, message, type: 'confirm', onConfirm };
             render();
         };
         const closeModal = () => { 
-            window.saveScrollPosition(); // Critical: Save scroll before closing modal to prevent reset
+            window.saveScrollPosition();
             window.state.modal.show = false; 
             render(); 
         };
         const openQRModal = (id, name) => { window.state.showQRModal = { id, name }; render(); };
         const closeQRModal = () => { window.state.showQRModal = null; render(); };
         
-        const requestCameraPermission = () => {
+        const requestCameraPermission = (mode) => {
+            const actionText = mode === 'checkout' ? "เช็คเอาท์ (คืนทรัพยากร)" : "เช็คอิน";
             window.uiConfirm(
                 "การขอสิทธิ์เข้าใช้งาน", 
-                "ระบบจะทำการเปิดกล้องหลังอัตโนมัติ เพื่อสแกนคิวอาร์โค้ดบนอุปกรณ์ที่คุณต้องการเช็คอิน", 
+                `ระบบจะทำการเปิดกล้องหลังอัตโนมัติ เพื่อสแกนคิวอาร์โค้ดสำหรับ ${actionText}`, 
                 () => { setView('scanner'); }
             );
         };
 
         const isServiceAvailable = (dateStr) => {
-            // Check Global System Status
             if (window.state.settings.systemStatus === false) return false;
-
-            // Check Closed Dates
             if (window.state.settings.closedDates && window.state.settings.closedDates[dateStr]) {
-                return true; // Return true to allow rendering, but we will style it as closed
+                return true;
             }
 
             const d = new Date(dateStr);
@@ -820,7 +829,6 @@
         // --- Logic: Scroll to Target ---
         const scrollToTarget = () => {
             let targetId = null;
-            // UPDATE: Change target to 'quota-container' instead of 'slots-container'
             if (window.state.view === 'calendar') targetId = 'quota-container';
             else if (!window.state.selectedResource && window.state.view !== 'login') targetId = 'resource-list';
             else if (window.state.view === 'selection') targetId = 'resource-list';
@@ -836,9 +844,7 @@
             const hint = document.getElementById('scroll-hint');
             
             let targetId = null;
-            // UPDATE: Check visibility relative to quota-container
             if (window.state.view === 'calendar') targetId = 'quota-container';
-            // Logic to support selection view or general view without resource selected
             else if (!window.state.selectedResource && window.state.view !== 'login' && window.state.view !== 'scanner' && window.state.view !== 'pass') {
                  targetId = 'resource-list';
             } else if (window.state.view === 'selection') {
@@ -849,7 +855,6 @@
 
             if (!container || !hint) return;
 
-            // Reset state - Hide initially
             hint.style.opacity = '0';
             hint.style.pointerEvents = 'none';
             if (window.state.hintTimeout) clearTimeout(window.state.hintTimeout);
@@ -857,16 +862,14 @@
             if (target) {
                 const checkVisibility = () => {
                     const rect = target.getBoundingClientRect();
-                    // If top of element is further down than viewport height, it needs scrolling
                     const isVisible = rect.top < (window.innerHeight - 100); 
                     return isVisible;
                 };
 
-                // Add delay 2 seconds
                 window.state.hintTimeout = setTimeout(() => {
                     if (!checkVisibility()) {
                         hint.style.opacity = '1';
-                        hint.style.pointerEvents = 'auto'; // Make it clickable
+                        hint.style.pointerEvents = 'auto'; 
                         hint.style.transform = 'translate(-50%, 0)';
                         hint.style.cursor = 'pointer';
                     }
@@ -883,11 +886,13 @@
             }
         };
 
-        // --- NEW HELPER: Render Active User Card ---
-        function renderActiveUserCard(resourceId) {
-            // NEW: strict check for today
+        // --- UPDATED HELPER: Render Active User Card ---
+        // Added 'forceShow' to bypass date check for the public main view
+        function renderActiveUserCard(resourceId, forceShow = false) {
             const todayStr = getLocalDateString();
-            if (window.state.selectedDate !== todayStr) return '';
+            
+            // Only enforce today check if NOT forceShow
+            if (!forceShow && window.state.selectedDate !== todayStr) return '';
 
             const res = window.state.resources.find(r => r.id === resourceId);
             if (!res || res.status !== 'in_use' || !res.currentStudent) return '';
@@ -946,7 +951,6 @@
                 `;
             }
 
-            // Append Loading Overlay if active
             const loadingOverlay = window.state.isLoading ? `
                 <div class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[9999] flex flex-col items-center justify-center p-8 text-white animate-in fade-in duration-200">
                     <div class="w-12 h-12 border-4 border-white/20 border-t-white rounded-full animate-spin mb-4"></div>
@@ -964,24 +968,26 @@
 
             const container = document.querySelector('.scrollable-content');
             if (container) {
-                // Robust Scroll Restore Logic
                 if (window.state.shouldRestoreScroll) {
-                    container.style.scrollBehavior = 'auto'; // Disable smooth scroll for instant restore
+                    container.style.scrollBehavior = 'auto'; 
                     container.scrollTop = window.state.lastScrollTop;
-                    window.state.shouldRestoreScroll = false; // Reset flag
+                    window.state.shouldRestoreScroll = false; 
                 } else if (window.state.lastScrollTop === 0) {
-                     // Only reset to top if not restoring and lastScrollTop is explicitly 0 (like new view)
                      container.scrollTop = 0;
                 }
             }
 
             setupScrollHint();
             lucide.createIcons();
-            if (window.state.view === 'scanner') setTimeout(initScanner, 100);
+            // Pass mode to scanner if applicable
+            if (window.state.view === 'scanner') {
+                 const booking = window.state.activeBookings[0];
+                 const mode = booking?.status === 'checked_in' ? 'checkout' : 'checkin';
+                 setTimeout(() => initScanner(mode), 100);
+            }
         }
 
         function renderScrollHint() {
-            // Updated condition to include selection/main view
             const isCalendar = window.state.view === 'calendar';
             const isSelection = !window.state.selectedResource && window.state.view !== 'login' && window.state.view !== 'scanner';
             
@@ -989,7 +995,6 @@
             
             const text = isCalendar ? 'เลื่อนลงเพื่อดูช่วงเวลา' : 'เลื่อนเพื่อดูจุดใช้งาน';
 
-            // Updated design: Glassmorphism + Clickable (onclick)
             return `
                 <div id="scroll-hint" onclick="window.scrollToTarget()" class="fixed bottom-[calc(6rem+env(safe-area-inset-bottom))] left-1/2 -translate-x-1/2 bg-slate-800/80 text-white text-[10px] font-bold px-6 py-3 rounded-full shadow-2xl opacity-0 transition-all duration-300 pointer-events-none z-30 backdrop-blur-md flex items-center gap-2 border border-white/10 uppercase tracking-wider cursor-pointer hover:bg-slate-700 active:scale-95">
                     <span>${text}</span>
@@ -1026,7 +1031,7 @@
             const firstDay = new Date(year, month, 1).getDay();
             const daysInMonth = new Date(year, month + 1, 0).getDate();
             const maxSlots = getPossibleSlotsCount();
-            const todayStr = getLocalDateString(); // Fixed Date
+            const todayStr = getLocalDateString();
             
             let daysHtml = [];
             for(let i=0; i<firstDay; i++) daysHtml.push('<div class="aspect-square"></div>');
@@ -1038,7 +1043,6 @@
                 const isPast = dateStr < todayStr;
                 const available = isServiceAvailable(dateStr);
                 
-                // Check if this date is in closedDates
                 const isClosed = window.state.settings.closedDates && window.state.settings.closedDates[dateStr];
                 
                 const bookingsOnDay = window.state.bookings.filter(b => b.date === dateStr && b.resourceId === targetResId);
@@ -1053,7 +1057,6 @@
                     else if (count > 0) borderClass = 'border-green-500 bg-green-50';
                 }
 
-                // Updated: Added window.saveScrollPosition() to onclick
                 daysHtml.push(`
                     <button onclick="${available ? `window.saveScrollPosition(); window.state.selectedDate='${dateStr}'; ${isInternal ? 'window.render()' : "window.setView('public_slots')"}` : ''}" 
                             class="aspect-square flex flex-col items-center justify-center rounded-xl transition-all border-2 ${isSelected && isInternal ? 'ring-4 ring-indigo-200 z-10' : ''} 
@@ -1067,7 +1070,6 @@
                 `);
             }
 
-            // Updated: Added window.saveScrollPosition() to nav buttons
             return `
                 <div class="bg-white rounded-[2.5rem] p-6 shadow-xl border border-white">
                     <div class="flex items-center justify-between mb-6 px-2">
@@ -1094,9 +1096,10 @@
         function renderPublicView() {
             if (window.state.view === 'public_slots') return renderPublicSlots();
             
-            // Logic for Active User Display (Original - Keep for consistency or reuse helper if desired, but this one is slightly different visually in original, but we can reuse to simplify)
-            // Using the new helper for cleaner code
-            const activeUserCard = window.state.publicSelectedResourceId ? renderActiveUserCard(window.state.publicSelectedResourceId) : '';
+            // UPDATED: Show Active User info (forceShow = true) because this is the main overview
+            const activeUserCard = window.state.publicSelectedResourceId 
+                ? renderActiveUserCard(window.state.publicSelectedResourceId, true) 
+                : '';
 
             return `
                 <div class="flex-1 flex flex-col bg-slate-50 overflow-hidden page-transition">
@@ -1118,6 +1121,7 @@
                                 </div>
                             ` : ''}
                             
+                            <!-- Active User Card Above Calendar -->
                             ${activeUserCard}
 
                             ${renderCalendarWidget(false)}
@@ -1129,7 +1133,7 @@
 
         function renderPublicSlots() {
             const dateStr = window.state.selectedDate;
-            const todayStr = getLocalDateString(); // Fixed Date
+            const todayStr = getLocalDateString(); 
             const isPastDate = dateStr < todayStr;
 
             const slots = [];
@@ -1145,7 +1149,7 @@
             const res = window.state.resources.find(r => r.id === window.state.publicSelectedResourceId);
             const resBookings = window.state.bookings.filter(b => b.date === dateStr && b.resourceId === res.id);
             
-            // NEW: Add Active User Card here
+            // Active User Card - Standard check (Only if today)
             const activeUserCard = renderActiveUserCard(window.state.publicSelectedResourceId);
 
             return `
@@ -1157,7 +1161,7 @@
                     </header>
                     <div class="scrollable-content p-6 space-y-4">
                         <div class="max-w-md mx-auto space-y-3">
-                            <!-- Show Active User Card -->
+                            <!-- Show Active User Card (Only if Today) -->
                             ${activeUserCard}
                         
                             ${isPastDate ? `<div class="bg-red-50 p-4 rounded-2xl border border-red-100 text-red-500 font-bold text-[10px] uppercase text-center mb-4">วันและเวลาที่ผ่านมาแล้ว ไม่สามารถทำการจองใหม่ได้</div>` : ''}
@@ -1206,7 +1210,7 @@
         function renderCalendarUI() {
             const hStart = window.state.settings.startTime;
             const hEnd = window.state.settings.endTime;
-            const todayStr = getLocalDateString(); // Fixed Date
+            const todayStr = getLocalDateString();
             const isPastDate = window.state.selectedDate < todayStr;
             const isClosedDate = window.state.settings.closedDates && window.state.settings.closedDates[window.state.selectedDate];
 
@@ -1221,9 +1225,9 @@
                 current.setHours(current.getHours() + 1);
             }
             
-            const myToday = window.state.bookings.filter(b => b.studentId === window.state.studentId && b.date === window.state.selectedDate && b.resourceId === window.state.selectedResource.id);
-            const bookedDaily = window.state.bookings.filter(b => b.studentId === window.state.studentId && b.date === window.state.selectedDate).length;
-            const bookedTotal = window.state.bookings.filter(b => b.studentId === window.state.studentId).length;
+            const myToday = window.state.bookings.filter(b => b.studentId === window.state.studentId && b.date === window.state.selectedDate && b.resourceId === window.state.selectedResource.id && b.status !== 'completed');
+            const bookedDaily = window.state.bookings.filter(b => b.studentId === window.state.studentId && b.date === window.state.selectedDate && b.status !== 'completed').length;
+            const bookedTotal = window.state.bookings.filter(b => b.studentId === window.state.studentId && b.status !== 'completed').length;
 
             return `
                 <div class="space-y-6 page-transition text-left">
@@ -1240,7 +1244,6 @@
                     ${renderCalendarWidget(true)}
                     
                     <div class="space-y-4">
-                        <!-- ADDED: ID for scroll targeting and scroll-mt-24 for spacing offset -->
                         <div id="quota-container" class="grid grid-cols-2 gap-3 scroll-mt-24">
                             <div class="bg-indigo-600 p-4 rounded-2xl text-white shadow-lg text-left leading-none">
                                 <p class="text-[8px] font-bold uppercase opacity-60 mb-1 tracking-wider">โควตาวันนี้</p>
@@ -1260,7 +1263,7 @@
                             </button>
                         ` : ''}
 
-                        <!-- NEW: Active User Card in Booking Page -->
+                        <!-- Active User Card -->
                         ${renderActiveUserCard(window.state.selectedResource.id)}
 
                         <div class="flex justify-between items-center px-2 pt-2">
@@ -1276,7 +1279,7 @@
                         ` : !isServiceAvailable(window.state.selectedDate) ? `<div class="p-12 bg-orange-50 rounded-[2.5rem] text-center border-2 border-dashed border-orange-200 font-bold text-orange-700 text-sm uppercase">ไม่เปิดให้บริการในวันนี้</div>` : `
                             <div id="slots-container" class="grid grid-cols-1 gap-2.5">
                                 ${slots.map(s => {
-                                    const bOthers = window.state.bookings.find(b => b.date === window.state.selectedDate && b.slot === s.start && b.resourceId === window.state.selectedResource.id && b.studentId !== window.state.studentId);
+                                    const bOthers = window.state.bookings.find(b => b.date === window.state.selectedDate && b.slot === s.start && b.resourceId === window.state.selectedResource.id && b.studentId !== window.state.studentId && b.status !== 'completed');
                                     const bMine = window.state.bookings.find(b => b.date === window.state.selectedDate && b.slot === s.start && b.resourceId === window.state.selectedResource.id && b.studentId === window.state.studentId);
                                     const isSelecting = window.state.selectedSlots.some(sel => sel.start === s.start);
                                     
@@ -1291,10 +1294,17 @@
                                         act = ""; 
                                         icon = '<i data-lucide="lock" size="14"></i>';
                                     } else if (bMine) { 
-                                        btnClass = "bg-green-50 border-green-500 text-green-700 shadow-sm"; 
-                                        sText = "จองแล้ว (คลิกยกเลิก)"; 
-                                        act = `window.delBooking('${bMine.id}')`; 
-                                        icon = '<i data-lucide="check" size="16"></i>';
+                                        if (bMine.status === 'completed') {
+                                            btnClass = "bg-slate-50 border-slate-200 text-slate-400 cursor-not-allowed";
+                                            sText = "ใช้งานเสร็จสิ้น";
+                                            act = "";
+                                            icon = '<i data-lucide="check-circle" size="16"></i>';
+                                        } else {
+                                            btnClass = "bg-green-50 border-green-500 text-green-700 shadow-sm"; 
+                                            sText = "จองแล้ว (คลิกยกเลิก)"; 
+                                            act = `window.delBooking('${bMine.id}')`; 
+                                            icon = '<i data-lucide="check" size="16"></i>';
+                                        }
                                     } else if (isSelecting) { 
                                         btnClass = "bg-indigo-600 border-indigo-600 text-white shadow-xl ring-4 ring-indigo-50 transform scale-[1.02] z-10"; 
                                         sText = "กำลังเลือก"; 
@@ -1350,30 +1360,25 @@
         }
 
         function renderResourceMenu() {
-            // Fetch my bookings sorted by createdAt descending (newest first)
+            // Filter completed bookings for quota count
+            const bookedTotal = window.state.bookings.filter(b => b.studentId === window.state.studentId && b.status !== 'completed').length;
+            
             const myBookings = window.state.bookings
                 .filter(b => b.studentId === window.state.studentId)
                 .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
 
-            // Logic for Quota Calculation
-            const bookedTotal = window.state.bookings.filter(b => b.studentId === window.state.studentId).length;
-            
-            // Logic for Date Summary (Group by date)
             const dateSummary = {};
             myBookings.forEach(b => {
                  dateSummary[b.date] = (dateSummary[b.date] || 0) + 1;
             });
-            const sortedSummaryDates = Object.keys(dateSummary).sort(); // Sort date ascending
-
-            // Check System Status
-            const isSystemOpen = window.state.settings.systemStatus !== false; // Default true if undefined
+            const sortedSummaryDates = Object.keys(dateSummary).sort(); 
+            const isSystemOpen = window.state.settings.systemStatus !== false; 
 
             return `
                 <div class="space-y-6 page-transition text-left pb-12">
                     <div class="bg-indigo-600 p-4 rounded-[2rem] text-white shadow-xl relative overflow-hidden h-auto transition-all">
                          <div class="absolute -right-10 -top-10 w-40 h-40 bg-white/10 rounded-full blur-3xl pointer-events-none"></div>
                          
-                         <!-- Header Row: Label & Status -->
                          <div class="flex justify-between items-start mb-1">
                              <p class="text-[9px] font-bold uppercase tracking-widest opacity-60">Authenticated ID</p>
                              <div class="flex items-center gap-1.5 bg-white/10 px-2 py-1 rounded-full border border-white/10">
@@ -1382,12 +1387,9 @@
                             </div>
                          </div>
 
-                         <!-- Student ID -->
                          <h2 class="text-2xl font-black tracking-tighter leading-none mb-3">${window.state.studentId}</h2>
 
-                         <!-- Quota Stats Row -->
                          <div class="grid grid-cols-2 gap-3 items-stretch">
-                             <!-- Total Quota (Thai) -->
                              <div class="bg-indigo-900/40 p-3 rounded-2xl flex flex-col justify-start min-h-[5rem]">
                                  <p class="text-[9px] font-bold text-indigo-300 uppercase tracking-widest mb-1">โควตาทั้งหมด</p>
                                   <div class="flex items-baseline gap-1">
@@ -1396,7 +1398,6 @@
                                  </div>
                              </div>
 
-                             <!-- Booked Dates Summary (Button Container with List Content) -->
                              <button onclick="window.openHistoryModal()" class="bg-indigo-900/40 p-3 rounded-2xl flex flex-col justify-start min-h-[5rem] relative text-left w-full hover:bg-indigo-900/60 transition-colors">
                                  <p class="text-[9px] font-bold text-indigo-300 uppercase tracking-widest mb-1">รายการจอง</p>
                                  <div class="space-y-1 w-full overflow-hidden">
@@ -1414,7 +1415,6 @@
                          </div>
                     </div>
 
-                    <!-- NEW: Project Details Info Box OR System Closed Warning -->
                     ${!isSystemOpen ? `
                         <div class="bg-red-50 p-6 rounded-[2rem] border-2 border-red-100 shadow-sm text-center animate-pulse">
                             <div class="w-12 h-12 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-3">
@@ -1465,11 +1465,10 @@
                         `).join('')}
                     </div>
 
-                    <!-- NEW: History Section at Bottom -->
+                    <!-- History Section -->
                     <div class="pt-8 border-t border-slate-100 mt-4">
                         <div class="flex justify-between items-center px-2 mb-4">
                             <div class="text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none">ประวัติการจองของฉัน (${myBookings.length})</div>
-                            <!-- REMOVED: Clear All Button -->
                         </div>
 
                         ${myBookings.length === 0 ? 
@@ -1480,10 +1479,12 @@
                                     const statusColors = {
                                         'booked': 'text-indigo-500 bg-indigo-50 border-indigo-100',
                                         'checked_in': 'text-green-500 bg-green-50 border-green-100',
+                                        'completed': 'text-slate-500 bg-slate-50 border-slate-100'
                                     };
                                     const statusText = {
                                         'booked': 'รอเข้าใช้งาน',
                                         'checked_in': 'เข้าใช้งานแล้ว',
+                                        'completed': 'สำเร็จ'
                                     };
                                     const sColor = statusColors[b.status] || 'text-slate-500 bg-slate-50';
                                     const sText = statusText[b.status] || b.status;
@@ -1500,18 +1501,16 @@
                                                 </div>
                                             </div>
                                             
-                                            <!-- Expanded Detail (Read Only) -->
                                             ${isExpanded ? `
                                                 <div class="mt-4 pt-4 border-t border-slate-50 animate-in slide-in-from-top-2 fade-in duration-200">
-                                                    <div class="flex justify-between items-center text-[9px] text-slate-400 font-bold uppercase tracking-widest mb-2">
-                                                        <span>Recorded Time</span>
-                                                        <span>${formatDateTime(b.createdAt)}</span>
+                                                    <div class="flex justify-between items-center text-[9px] text-slate-400 font-bold uppercase tracking-widest mb-1">
+                                                        <span>Check-in</span>
+                                                        <span>${formatDateTime(b.checkInAt)}</span>
                                                     </div>
                                                     <div class="flex justify-between items-center text-[9px] text-slate-400 font-bold uppercase tracking-widest">
-                                                        <span>Reference ID</span>
-                                                        <span class="font-mono opacity-60">${b.id.substring(0,8)}...</span>
+                                                        <span>Check-out</span>
+                                                        <span>${formatDateTime(b.checkOutAt)}</span>
                                                     </div>
-                                                    <!-- REMOVED: Delete Button -->
                                                 </div>
                                             ` : ''}
                                         </div>
@@ -1524,46 +1523,91 @@
             `;
         }
 
-        // --- NEW: Add back renderReceiptUI function with SCAN RESTRICTION ---
+        // --- UPDATED: Squeezed Receipt UI & Check-out Logic ---
         function renderReceiptUI() {
             const booking = window.state.activeBookings[0];
             const bookingDate = booking ? booking.date : '';
             const todayStr = getLocalDateString();
             const isToday = bookingDate === todayStr;
 
-            // NEW: Time check logic for button restriction
-            // Updated to use SYSTEM END TIME instead of booking slot time
             const systemEndTime = window.state.settings.endTime || "23:59";
             
             const now = new Date();
             const currentHm = now.getHours().toString().padStart(2,'0') + ':' + now.getMinutes().toString().padStart(2,'0');
             const isTimeOver = currentHm > systemEndTime;
 
+            // Check Booking Status
+            const isCheckedIn = booking?.status === 'checked_in';
+            const isCompleted = booking?.status === 'completed';
+
+            // Timestamps
+            const checkInTime = booking?.checkInAt ? formatTimeOnly(booking.checkInAt) : '-';
+            const checkOutTime = booking?.checkOutAt ? formatTimeOnly(booking.checkOutAt) : '-';
+
             return `
                 <div class="max-w-xs mx-auto animate-in zoom-in duration-300 page-transition">
                     <div class="bg-white rounded-[2.5rem] overflow-hidden shadow-2xl border border-slate-100 relative">
-                        <div class="bg-indigo-600 p-8 text-white text-center">
-                            <i data-lucide="ticket" size="40" class="mx-auto mb-4 opacity-40"></i>
-                            <h2 class="text-2xl font-black mb-1 tracking-tight leading-none">ใบจองสำเร็จ</h2>
+                        <!-- Compact Header -->
+                        <div class="bg-indigo-600 p-5 text-white text-center relative overflow-hidden">
+                             <div class="absolute -right-4 -top-4 w-20 h-20 bg-white/10 rounded-full blur-xl"></div>
+                            <i data-lucide="ticket" size="32" class="mx-auto mb-2 opacity-40"></i>
+                            <h2 class="text-xl font-black mb-0 tracking-tight leading-none uppercase">
+                                ${isCompleted ? 'การใช้งานเสร็จสิ้น' : 'ใบจองสำเร็จ'}
+                            </h2>
                         </div>
-                        <div class="p-8 space-y-5 ticket-cutout text-center leading-tight">
-                            <div><p class="text-[8px] font-bold text-slate-400 uppercase mb-1">Resource</p><p class="text-xl font-black text-slate-800 uppercase">${window.state.activeBookings[0]?.resourceName}</p></div>
-                            <div class="bg-slate-50 p-5 rounded-2xl border-2 border-dashed border-slate-200">
-                                <p class="text-[8px] font-bold text-slate-400 uppercase mb-2">Approved Time</p>
-                                <p class="text-indigo-600 font-black text-base">${window.formatBookingRanges(window.state.activeBookings)}</p>
-                                <p class="text-[10px] text-slate-400 font-bold mt-2 border-t border-slate-200 pt-2">วันที่: ${formatDateTH(bookingDate)}</p>
+                        
+                        <!-- Compact Body (Reduced padding p-8 -> p-5, space-y-5 -> space-y-3) -->
+                        <div class="p-5 space-y-3 ticket-cutout text-center leading-tight">
+                            <div>
+                                <p class="text-[8px] font-bold text-slate-400 uppercase mb-1">Resource</p>
+                                <p class="text-lg font-black text-slate-800 uppercase leading-none">${window.state.activeBookings[0]?.resourceName}</p>
                             </div>
-                            <div class="pt-4 flex flex-col gap-3">
-                                ${isToday ? (
-                                    !isTimeOver ? `
-                                        <button onclick="window.requestCameraPermission()" class="w-full py-4 bg-slate-900 text-white font-bold rounded-2xl shadow-xl active:scale-95 transition-all flex items-center justify-center gap-3"><i data-lucide="qr-code" size="20"></i> สแกนเช็คอิน</button>
-                                    ` : `
-                                        <button disabled class="w-full py-4 bg-slate-100 text-red-400 font-bold rounded-2xl cursor-not-allowed flex items-center justify-center gap-3 opacity-80"><i data-lucide="clock" size="20"></i> หมดเวลาเข้าใช้งาน</button>
+                            
+                            <div class="bg-slate-50 p-4 rounded-xl border-2 border-dashed border-slate-200">
+                                <p class="text-[8px] font-bold text-slate-400 uppercase mb-1">Approved Time</p>
+                                <p class="text-indigo-600 font-black text-sm">${window.formatBookingRanges(window.state.activeBookings)}</p>
+                                <p class="text-[10px] text-slate-400 font-bold mt-2 border-t border-slate-200 pt-2">วันที่: ${formatDateTH(bookingDate)}</p>
+                                
+                                <!-- Added Check-in/Out Timestamps -->
+                                <div class="flex justify-between items-center mt-2 pt-2 border-t border-slate-200 text-[9px] font-bold text-slate-500 uppercase tracking-tight">
+                                    <div class="flex flex-col items-start">
+                                        <span class="text-slate-300">In</span>
+                                        <span class="${checkInTime!=='-' ? 'text-green-500':''}">${checkInTime}</span>
+                                    </div>
+                                    <div class="flex flex-col items-end">
+                                        <span class="text-slate-300">Out</span>
+                                        <span class="${checkOutTime!=='-' ? 'text-slate-800':''}">${checkOutTime}</span>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <div class="pt-2 flex flex-col gap-2">
+                                ${isCompleted ? `
+                                    <button disabled class="w-full py-3 bg-slate-100 text-slate-400 font-bold rounded-xl cursor-not-allowed flex items-center justify-center gap-2 opacity-80 border border-slate-200">
+                                        <i data-lucide="check-circle" size="18"></i> เรียบร้อยแล้ว
+                                    </button>
+                                ` : isToday ? (
+                                    !isTimeOver ? (
+                                        isCheckedIn ? `
+                                            <button onclick="window.requestCameraPermission('checkout')" class="w-full py-3 bg-orange-500 text-white font-bold rounded-xl shadow-lg hover:bg-orange-600 active:scale-95 transition-all flex items-center justify-center gap-2 border-b-4 border-orange-700">
+                                                <i data-lucide="log-out" size="18"></i> สแกนเช็คเอาท์
+                                            </button>
+                                        ` : `
+                                            <button onclick="window.requestCameraPermission('checkin')" class="w-full py-3 bg-slate-900 text-white font-bold rounded-xl shadow-lg active:scale-95 transition-all flex items-center justify-center gap-2 border-b-4 border-slate-700">
+                                                <i data-lucide="qr-code" size="18"></i> สแกนเช็คอิน
+                                            </button>
+                                        `
+                                    ) : `
+                                        <button disabled class="w-full py-3 bg-slate-100 text-red-400 font-bold rounded-xl cursor-not-allowed flex items-center justify-center gap-2 opacity-80">
+                                            <i data-lucide="clock" size="18"></i> หมดเวลาเข้าใช้งาน
+                                        </button>
                                     `
                                 ) : `
-                                    <button disabled class="w-full py-4 bg-slate-100 text-slate-400 font-bold rounded-2xl cursor-not-allowed flex items-center justify-center gap-3 opacity-80"><i data-lucide="calendar-off" size="20"></i> เช็คอินได้เฉพาะวันที่จอง</button>
+                                    <button disabled class="w-full py-3 bg-slate-100 text-slate-400 font-bold rounded-xl cursor-not-allowed flex items-center justify-center gap-2 opacity-80">
+                                        <i data-lucide="calendar-off" size="18"></i> เช็คอินได้เฉพาะวันที่จอง
+                                    </button>
                                 `}
-                                <button onclick="window.setView('selection'); window.state.selectedResource=null; window.render();" class="text-[10px] font-bold text-slate-400 uppercase tracking-widest py-2">กลับหน้าหลัก</button>
+                                <button onclick="window.setView('selection'); window.state.selectedResource=null; window.render();" class="text-[9px] font-bold text-slate-400 uppercase tracking-widest py-2 hover:text-indigo-500 transition-colors">กลับหน้าหลัก</button>
                             </div>
                         </div>
                     </div>
@@ -1571,17 +1615,23 @@
             `;
         }
 
-        // --- NEW: Add back renderScannerUI function ---
         function renderScannerUI() {
+            // Determine text based on mode
+            const booking = window.state.activeBookings[0];
+            const isCheckout = booking?.status === 'checked_in';
+            const actionText = isCheckout ? "เช็คเอาท์ (Check-out)" : "เช็คอิน (Check-in)";
+            const colorClass = isCheckout ? "text-orange-400" : "text-white";
+
             return `
                 <div class="fixed inset-0 bg-slate-900 z-[100] flex flex-col items-center justify-center p-8 text-white">
-                    <h2 class="text-3xl font-black mb-1 text-center">กำลังรอรหัส QR...</h2>
-                    <div class="relative w-full max-w-sm aspect-square bg-black rounded-[3rem] overflow-hidden border-8 border-white/5 my-8">
+                    <h2 class="text-2xl font-black mb-1 text-center ${colorClass}">${actionText}</h2>
+                    <p class="text-[10px] font-bold uppercase tracking-widest opacity-60 mb-4">Scan QR Code at the Resource</p>
+                    <div class="relative w-full max-w-sm aspect-square bg-black rounded-[3rem] overflow-hidden border-8 border-white/5 my-4 shadow-2xl">
                         <div id="reader"></div>
                         <div class="absolute inset-0 pointer-events-none border-[3rem] border-slate-900/40 z-10"></div>
-                        <div class="absolute top-1/2 left-0 right-0 h-1.5 bg-indigo-500 shadow-[0_0_30px_#6366f1] animate-scan-line z-20"></div>
+                        <div class="absolute top-1/2 left-0 right-0 h-1.5 ${isCheckout ? 'bg-orange-500 shadow-[0_0_30px_#f97316]' : 'bg-indigo-500 shadow-[0_0_30px_#6366f1]'} animate-scan-line z-20"></div>
                     </div>
-                    <button onclick="window.setView('pass')" class="w-full max-w-sm py-5 bg-red-500/10 text-red-400 font-bold rounded-2xl border border-red-500/20 text-[10px] uppercase tracking-widest">ยกเลิก</button>
+                    <button onclick="window.setView('pass')" class="w-full max-w-sm py-4 bg-red-500/10 text-red-400 font-bold rounded-2xl border border-red-500/20 text-[10px] uppercase tracking-widest">ยกเลิก</button>
                 </div>
             `;
         }
@@ -1719,7 +1769,9 @@
                                                 <p class="text-[8px] text-slate-400 font-bold uppercase mt-1 truncate max-w-[100px] text-left leading-none">${b.resourceName}</p>
                                             </td>
                                             <td class="py-5 text-center text-center">
-                                                ${b.status === 'checked_in' ? `<span class="px-2.5 py-1 bg-green-100 text-green-600 text-[8px] font-bold rounded-full uppercase border border-green-200 text-center">Arrived</span>` : `<span class="px-2.5 py-1 bg-slate-100 text-slate-400 text-[8px] font-bold rounded-full uppercase border border-slate-200 opacity-60 text-center">Waiting</span>`}
+                                                ${b.status === 'checked_in' ? `<span class="px-2.5 py-1 bg-green-100 text-green-600 text-[8px] font-bold rounded-full uppercase border border-green-200 text-center">Arrived</span>` : 
+                                                  b.status === 'completed' ? `<span class="px-2.5 py-1 bg-slate-100 text-slate-400 text-[8px] font-bold rounded-full uppercase border border-slate-200 text-center">Done</span>` :
+                                                  `<span class="px-2.5 py-1 bg-slate-100 text-slate-400 text-[8px] font-bold rounded-full uppercase border border-slate-200 opacity-60 text-center">Waiting</span>`}
                                             </td>
                                             <td class="py-5 text-right text-right">
                                                 <button onclick="window.delBooking('${b.id}')" class="p-2 text-slate-200 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all text-center"><i data-lucide="trash-2" size="18"></i></button>
@@ -1781,11 +1833,9 @@
             `;
         }
 
-        // NEW: Render History Modal function
         function renderHistoryModal() {
             if (!window.state.showHistoryModal) return "";
             
-            // Recalculate summary logic for modal
             const myBookings = window.state.bookings
                 .filter(b => b.studentId === window.state.studentId)
                 .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
@@ -1851,7 +1901,6 @@
 
         init();
 
-        // --- Export all functions to window object ---
         window.setView = setView;
         window.handleLogin = handleLogin;
         window.logout = logout;
@@ -1878,12 +1927,9 @@
         window.scrollToTarget = scrollToTarget;
         window.formatDateShortTH = formatDateShortTH;
         window.goToDate = goToDate;
-        
-        // NEW EXPORTS FOR ADMIN FEATURES
         window.toggleSystemStatus = toggleSystemStatus;
         window.addClosedDate = addClosedDate;
         window.removeClosedDate = removeClosedDate;
-        // NEW EXPORT FOR HISTORY MODAL
         window.openHistoryModal = openHistoryModal;
         window.closeHistoryModal = closeHistoryModal;
     </script>
