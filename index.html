@@ -963,6 +963,49 @@
 
         function renderPublicView() {
             if (window.state.view === 'public_slots') return renderPublicSlots();
+            
+            // Logic for Active User Display
+            const currentRes = window.state.resources.find(r => r.id === window.state.publicSelectedResourceId);
+            let activeUserCard = '';
+            
+            if (currentRes && currentRes.status === 'in_use' && currentRes.currentStudent) {
+                const todayStr = getLocalDateString();
+                // Find active bookings for this user on this resource today
+                const activeBookings = window.state.bookings.filter(b => 
+                    b.resourceId === currentRes.id && 
+                    b.studentId === currentRes.currentStudent && 
+                    b.date === todayStr &&
+                    b.status === 'checked_in'
+                );
+                
+                // If found, format time
+                if (activeBookings.length > 0) {
+                    const timeRange = window.formatBookingRanges(activeBookings);
+                    activeUserCard = `
+                        <div class="mb-6 p-6 bg-indigo-600 rounded-[2rem] text-white shadow-xl relative overflow-hidden animate-in fade-in slide-in-from-top-4 duration-500">
+                            <div class="absolute -right-10 -top-10 w-40 h-40 bg-white/10 rounded-full blur-3xl pointer-events-none"></div>
+                            <div class="relative z-10 flex items-center gap-5">
+                                <div class="w-14 h-14 bg-white/20 rounded-2xl flex items-center justify-center shadow-inner relative">
+                                    <div class="absolute inset-0 bg-white/10 rounded-2xl animate-ping opacity-20"></div>
+                                    <i data-lucide="user-check" size="28"></i>
+                                </div>
+                                <div>
+                                    <div class="flex items-center gap-2 mb-1">
+                                        <div class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
+                                        <p class="text-[10px] font-bold uppercase tracking-widest opacity-80">กำลังใช้งาน (In Use)</p>
+                                    </div>
+                                    <h3 class="text-2xl font-black leading-none tracking-tight mb-2">${currentRes.currentStudent}</h3>
+                                    <div class="inline-flex items-center gap-2 bg-indigo-800/40 px-3 py-1.5 rounded-lg border border-white/10 backdrop-blur-md">
+                                        <i data-lucide="clock" size="14" class="text-indigo-200"></i>
+                                        <span class="text-xs font-bold text-white tracking-wide">${timeRange} น.</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                }
+            }
+
             return `
                 <div class="flex-1 flex flex-col bg-slate-50 overflow-hidden page-transition">
                     <header class="p-6 bg-white border-b border-slate-200 flex items-center justify-between safe-pt h-auto min-h-16">
@@ -982,6 +1025,9 @@
                                     `).join('')}
                                 </div>
                             ` : ''}
+                            
+                            ${activeUserCard}
+
                             ${renderCalendarWidget(false)}
                         </div>
                     </div>
