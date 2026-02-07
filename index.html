@@ -138,6 +138,13 @@
         const db = getFirestore(app);
         const fbId = "smart-booking-v4"; 
 
+        // --- Robust Date Helper to Fix Timezone Issues ---
+        function getLocalDateString() {
+            const d = new Date();
+            const offset = d.getTimezoneOffset() * 60000;
+            return new Date(d.getTime() - offset).toISOString().split('T')[0];
+        }
+
         window.state = {
             user: null,
             studentId: localStorage.getItem('student_id') || '',
@@ -150,14 +157,14 @@
                 startTime: "09:00", 
                 endTime: "18:00", 
                 availableDays: [1, 2, 3, 4, 5], 
-                startDate: new Date().toISOString().split('T')[0], 
+                startDate: getLocalDateString(), 
                 endDate: "" 
             },
             allowedStudents: [], 
             resources: [],
             bookings: [],
             selectedResource: null,
-            selectedDate: new Date().toISOString().split('T')[0],
+            selectedDate: getLocalDateString(), 
             calendarViewDate: new Date(), 
             publicSelectedResourceId: '', 
             selectedSlots: [], 
@@ -190,6 +197,13 @@
             const parts = dateStr.split('-');
             if (parts.length !== 3) return dateStr;
             return `${parts[2]}/${parts[1]}/${parts[0]}`;
+        }
+        
+        function formatDateShortTH(dateStr) {
+            if (!dateStr) return "-";
+            const parts = dateStr.split('-');
+            if (parts.length !== 3) return dateStr;
+            return `${parts[2]}/${parts[1]}`;
         }
 
         function formatDateTime(ts) {
@@ -338,10 +352,41 @@
             render(); 
         };
 
+        // NEW: Function to jump to a specific date from the dashboard
+        const goToDate = (dateStr) => {
+             // Find a booking on this date for the current user to guess which resource they want to see
+             const booking = window.state.bookings.find(b => b.date === dateStr && b.studentId === window.state.studentId);
+             
+             if (booking) {
+                 // Open that resource
+                 window.state.selectedResource = { id: booking.resourceId, name: booking.resourceName };
+                 window.state.selectedDate = dateStr;
+                 window.state.view = 'calendar';
+                 window.state.lastScrollTop = 0;
+                 window.render();
+                 
+                 // Auto scroll to quota container after render
+                 setTimeout(() => {
+                     window.scrollToTarget();
+                 }, 300);
+             } else {
+                 // If no booking found, default to first resource
+                 if (window.state.resources.length > 0) {
+                     const r = window.state.resources[0];
+                     window.state.selectedResource = { id: r.id, name: r.name };
+                     window.state.selectedDate = dateStr;
+                     window.state.view = 'calendar';
+                     window.render();
+                     setTimeout(() => window.scrollToTarget(), 300);
+                 }
+             }
+        };
+
         const toggleSlotSelection = (slotObj) => {
             window.saveScrollPosition(); // Save scroll before toggling
-
-            const todayStr = new Date().toLocaleDateString('en-CA');
+            
+            // Fixed: Use getLocalDateString for accurate "Today" comparison
+            const todayStr = getLocalDateString();
             if (window.state.selectedDate < todayStr) {
                 return window.uiAlert("วันเวลาที่ผ่านมาแล้ว ไม่สามารถจองย้อนหลังได้", "error");
             }
@@ -364,7 +409,7 @@
         };
 
         const confirmBookingAction = async () => {
-            const todayStr = new Date().toLocaleDateString('en-CA');
+            const todayStr = getLocalDateString(); // Fixed Date
             if (window.state.selectedDate < todayStr) {
                 return window.uiAlert("วันเวลาที่ผ่านมาแล้ว ไม่สามารถจองย้อนหลังได้", "error");
             }
@@ -537,7 +582,7 @@
             // Save scroll position BEFORE showing confirm dialog
             window.saveScrollPosition();
 
-            const todayStr = new Date().toLocaleDateString('en-CA');
+            const todayStr = getLocalDateString(); // Fixed Date
             const isPast = b.date < todayStr;
             const title = isPast ? "ลบประวัติ" : "ยกเลิกการจอง";
             const msg = isPast ? "ต้องการลบประวัติรายการนี้ใช่หรือไม่?" : "ต้องการยกเลิกการจองนี้ใช่หรือไม่?";
@@ -629,8 +674,8 @@
         // --- Logic: Scroll to Target ---
         const scrollToTarget = () => {
             let targetId = null;
-            // Identify target based on view
-            if (window.state.view === 'calendar') targetId = 'slots-container';
+            // UPDATE: Change target to 'quota-container' instead of 'slots-container'
+            if (window.state.view === 'calendar') targetId = 'quota-container';
             else if (!window.state.selectedResource && window.state.view !== 'login') targetId = 'resource-list';
             else if (window.state.view === 'selection') targetId = 'resource-list';
             
@@ -645,7 +690,8 @@
             const hint = document.getElementById('scroll-hint');
             
             let targetId = null;
-            if (window.state.view === 'calendar') targetId = 'slots-container';
+            // UPDATE: Check visibility relative to quota-container
+            if (window.state.view === 'calendar') targetId = 'quota-container';
             // Logic to support selection view or general view without resource selected
             else if (!window.state.selectedResource && window.state.view !== 'login' && window.state.view !== 'scanner' && window.state.view !== 'pass') {
                  targetId = 'resource-list';
@@ -792,7 +838,7 @@
             const firstDay = new Date(year, month, 1).getDay();
             const daysInMonth = new Date(year, month + 1, 0).getDate();
             const maxSlots = getPossibleSlotsCount();
-            const todayStr = new Date().toLocaleDateString('en-CA');
+            const todayStr = getLocalDateString(); // Fixed Date
             
             let daysHtml = [];
             for(let i=0; i<firstDay; i++) daysHtml.push('<div class="aspect-square"></div>');
@@ -880,7 +926,7 @@
 
         function renderPublicSlots() {
             const dateStr = window.state.selectedDate;
-            const todayStr = new Date().toLocaleDateString('en-CA');
+            const todayStr = getLocalDateString(); // Fixed Date
             const isPastDate = dateStr < todayStr;
 
             const slots = [];
@@ -951,7 +997,7 @@
         function renderCalendarUI() {
             const hStart = window.state.settings.startTime;
             const hEnd = window.state.settings.endTime;
-            const todayStr = new Date().toLocaleDateString('en-CA');
+            const todayStr = getLocalDateString(); // Fixed Date
             const isPastDate = window.state.selectedDate < todayStr;
 
             const slots = [];
@@ -984,7 +1030,8 @@
                     ${renderCalendarWidget(true)}
                     
                     <div class="space-y-4">
-                        <div class="grid grid-cols-2 gap-3">
+                        <!-- ADDED: ID for scroll targeting and scroll-mt-24 for spacing offset -->
+                        <div id="quota-container" class="grid grid-cols-2 gap-3 scroll-mt-24">
                             <div class="bg-indigo-600 p-4 rounded-2xl text-white shadow-lg text-left leading-none">
                                 <p class="text-[8px] font-bold uppercase opacity-60 mb-1 tracking-wider">โควตาวันนี้</p>
                                 <p class="text-2xl font-black">${bookedDaily + window.state.selectedSlots.length} / ${window.state.settings.maxHoursPerDay} <span class="text-[10px] opacity-50">ชม.</span></p>
@@ -1089,15 +1136,61 @@
                 .filter(b => b.studentId === window.state.studentId)
                 .sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
 
+            // Logic for Quota Calculation
+            const bookedTotal = window.state.bookings.filter(b => b.studentId === window.state.studentId).length;
+            
+            // Logic for Date Summary (Group by date)
+            const dateSummary = {};
+            myBookings.forEach(b => {
+                 dateSummary[b.date] = (dateSummary[b.date] || 0) + 1;
+            });
+            const sortedSummaryDates = Object.keys(dateSummary).sort(); // Sort date ascending
+
             return `
                 <div class="space-y-6 page-transition text-left pb-12">
-                    <div class="bg-indigo-600 p-8 rounded-[2.5rem] text-white shadow-xl relative overflow-hidden">
-                        <p class="text-[9px] font-bold uppercase tracking-widest opacity-60 mb-2">Authenticated ID</p>
-                        <h2 class="text-4xl font-black tracking-tighter leading-none">${window.state.studentId}</h2>
-                        <div class="flex items-center gap-2 text-indigo-200 text-[9px] font-bold mt-8 bg-white/10 w-fit px-4 py-1.5 rounded-full border border-white/10 uppercase tracking-widest">
-                            <div class="w-2 h-2 bg-green-400 rounded-full animate-pulse"></div>
-                            <span>Connected</span>
-                        </div>
+                    <div class="bg-indigo-600 p-4 rounded-[2rem] text-white shadow-xl relative overflow-hidden">
+                         <div class="absolute -right-10 -top-10 w-40 h-40 bg-white/10 rounded-full blur-3xl pointer-events-none"></div>
+                         
+                         <!-- Header Row: Label & Status -->
+                         <div class="flex justify-between items-start mb-1">
+                             <p class="text-[9px] font-bold uppercase tracking-widest opacity-60">Authenticated ID</p>
+                             <div class="flex items-center gap-1.5 bg-white/10 px-2 py-1 rounded-full border border-white/10">
+                                <div class="w-1.5 h-1.5 bg-green-400 rounded-full animate-pulse"></div>
+                                <span class="text-[8px] font-bold text-indigo-100 uppercase tracking-widest">Connected</span>
+                            </div>
+                         </div>
+
+                         <!-- Student ID -->
+                         <h2 class="text-2xl font-black tracking-tighter leading-none mb-3">${window.state.studentId}</h2>
+
+                         <!-- Quota Stats Row -->
+                         <!-- Clean UI: removed border artifacts and backdrop blur -->
+                         <div class="grid grid-cols-2 gap-3">
+                             <!-- Total Quota (Thai) -->
+                             <div class="bg-indigo-900/40 p-3 rounded-2xl flex flex-col justify-center h-20">
+                                 <p class="text-[9px] font-bold text-indigo-300 uppercase tracking-widest mb-1">โควตาทั้งหมด</p>
+                                  <div class="flex items-baseline gap-1">
+                                     <span class="text-2xl font-black leading-none">${bookedTotal}</span>
+                                     <span class="text-[10px] opacity-50">/ ${window.state.settings.maxTotalHours} ชม.</span>
+                                 </div>
+                             </div>
+
+                             <!-- Booked Dates Summary (New) -->
+                             <div class="bg-indigo-900/40 p-3 rounded-2xl flex flex-col justify-start h-20 overflow-hidden relative">
+                                 <p class="text-[9px] font-bold text-indigo-300 uppercase tracking-widest mb-1 sticky top-0 z-10">รายการจอง (${sortedSummaryDates.length} วัน)</p>
+                                 <div class="overflow-y-auto custom-scrollbar pr-1 space-y-1 h-full relative z-0">
+                                    ${sortedSummaryDates.length === 0 ? 
+                                        '<div class="text-[10px] opacity-40 mt-1">- ว่าง -</div>' : 
+                                        sortedSummaryDates.map(d => `
+                                            <button onclick="window.goToDate('${d}')" class="w-full flex justify-between items-center text-[10px] font-medium leading-none text-indigo-50/80 hover:bg-white/10 rounded px-1 py-0.5 transition-colors text-left">
+                                                <span>${formatDateShortTH(d)}</span>
+                                                <span class="font-bold bg-white/10 px-1.5 py-0.5 rounded text-[9px]">${dateSummary[d]} ชม.</span>
+                                            </button>
+                                        `).join('')
+                                    }
+                                 </div>
+                             </div>
+                         </div>
                     </div>
 
                     <!-- NEW: Project Details Info Box -->
@@ -1362,7 +1455,7 @@
 
         function renderFooter() {
             return `
-                <footer class="flex-none bg-white border-t border-slate-100 py-6 px-8 z-50 shadow-inner safe-pb h-auto">
+                <footer class="flex-none bg-white border-t border-slate-100 py-2 px-8 z-50 shadow-inner safe-pb h-auto">
                     <div class="max-w-2xl mx-auto flex justify-between items-center text-[10px] font-bold text-slate-400 uppercase tracking-widest leading-none">
                         <div class="flex items-center gap-4 border-r pr-8 border-slate-100 text-left">
                             <div class="w-10 h-10 rounded-2xl bg-slate-50 flex items-center justify-center text-indigo-400 shadow-inner text-center"><i data-lucide="fingerprint" size="18"></i></div>
@@ -1450,6 +1543,10 @@
         window.viewPassToday = viewPassToday;
         // New Scroll To Target
         window.scrollToTarget = scrollToTarget;
+        // New Date Helper
+        window.formatDateShortTH = formatDateShortTH;
+        // NEW: Export goToDate
+        window.goToDate = goToDate;
     </script>
 </body>
 </html>
